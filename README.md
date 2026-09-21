@@ -26,7 +26,8 @@ surface biomes, and pulls Terralith's surface rules in at world load. Details in
 
 **Additional *additions***. I'm a big Create Mod fan, and usually play with [TFMG](https://github.com/DrMango14/Create-The_Factory_Must_Grow). Because `min_y` has been pinned at -192 for deeper oceans, oil wells have been placed at -189. 
 The snow has been made to work with another project of mine called [Snowier Snow](null), which adds snow displacement physics for snow blocks and snow layers, alongside compatibility with the physics engine [Sable](https://github.com/ryanhcode/sable), to work with [Create Aeronautics](https://github.com/Creators-of-Aeronautics/Simulated-Project).
-For compatibility requests, open a discussion. I'm actively looking for testers/helpers on the project as it gets more complex!
+For compatibility requests, open a discussion. I'm actively looking for testers/helpers on the project as it gets more complex!   
+NOTE THAT THE MODS LISTED ARE NOT REQUIRED AND THEIR EFFECTS WILL ENABLE WHEN THE PAIRED MOD HAS BEEN FOUND!
 
 ## Requirements
 
