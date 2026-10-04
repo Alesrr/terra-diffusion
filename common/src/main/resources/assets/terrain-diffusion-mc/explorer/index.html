@@ -309,6 +309,19 @@
   .map-img.loading { opacity: 0.35; }
 
   #coarse-img { image-rendering: pixelated; }
+  #detail-img { object-fit: contain; }
+  #detail-water {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    pointer-events: none;
+    display: none;
+  }
+  .water-toggle { font-size: 11px; display: inline-flex; align-items: center; gap: 3px; cursor: pointer; flex-shrink: 0; }
+  .water-status { font-size: 11px; opacity: 0.7; flex-shrink: 0; }
 
   .map-placeholder {
     position: absolute;
@@ -498,6 +511,60 @@
   }
   .coord-tp:hover { border-color: var(--accent); }
   .coord-tp-copied { border-color: #22c55e !important; color: #22c55e; }
+
+  /* ── Biome legend ── */
+  .map-area.wide-detail { grid-template-columns: 2fr 3fr; }
+  .detail-body {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+  .detail-body .nav-grid { flex: 1; min-width: 0; }
+  .biome-legend {
+    width: 210px;
+    flex-shrink: 0;
+    border-left: 1px solid var(--border);
+    background: #1b2429;
+    overflow-y: auto;
+    padding: 8px 10px;
+    display: none;
+  }
+  .biome-legend.visible { display: block; }
+  .bl-title {
+    font-size: 11px;
+    font-weight: 700;
+    color: #fff;
+    margin-bottom: 6px;
+    font-family: monospace;
+  }
+  .bl-row {
+    display: grid;
+    grid-template-columns: 14px 1fr auto;
+    align-items: center;
+    gap: 7px;
+    padding: 2px 3px;
+    border-radius: 3px;
+    font-size: 11.5px;
+    color: #dde5e8;
+    cursor: default;
+  }
+  .bl-row.hl { background: rgba(255,255,255,0.10); }
+  .bl-swatch {
+    width: 14px;
+    height: 12px;
+    border-radius: 2px;
+    border: 1px solid rgba(0,0,0,0.35);
+  }
+  .bl-share { font-family: monospace; color: #9fb0b8; }
+  .bl-empty { color: var(--muted); font-size: 11px; font-style: italic; }
+  .ht-swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 2px;
+    margin-right: 6px;
+    vertical-align: -1px;
+  }
 </style>
 </head>
 <body>
@@ -585,18 +652,26 @@
         <button class="active" id="mode-relief">Relief</button>
         <button id="mode-elevation">Elevation</button>
         <button id="mode-temperature">Temperature</button>
+        <button id="mode-biomes">Biomes</button>
+        <button id="biome-legend-toggle" style="display:none" title="Show or hide the biome list">Legend</button>
+        <label class="water-toggle" title="Rivers and lakes load after the map"><input type="checkbox" id="water-toggle" checked>Water</label>
+        <span class="water-status" id="water-status"></span>
         <span class="panel-info" id="detail-info">click coarse map to load</span>
       </div>
+      <div class="detail-body">
       <div class="nav-grid">
         <button class="pan-btn btn-up"    id="detail-up">↑</button>
         <button class="pan-btn btn-left"  id="detail-left">←</button>
         <div class="map-container" id="detail-container">
           <img id="detail-img" class="map-img" alt="detail map" style="display:none">
+          <img id="detail-water" alt="">
           <div class="spinner" id="detail-spinner"></div>
           <div class="map-placeholder" id="detail-placeholder">Click coarse map to generate</div>
         </div>
         <button class="pan-btn btn-right" id="detail-right">→</button>
         <button class="pan-btn btn-down"  id="detail-down">↓</button>
+      </div>
+      <aside class="biome-legend" id="biome-legend"></aside>
       </div>
     </div>
 
@@ -637,6 +712,8 @@
     detailPanI: 0,
     detailPanJ: 0,
     detailMode: 'relief',
+    detailBiomes: null,
+    legendOpen: true,
   };
 
   // ── DOM refs ──
@@ -659,6 +736,88 @@
   const detailSpinner   = document.getElementById('detail-spinner');
   const detailPlaceholder = document.getElementById('detail-placeholder');
   const detailInfo      = document.getElementById('detail-info');
+  const detailWater     = document.getElementById('detail-water');
+  const waterToggle     = document.getElementById('water-toggle');
+  const waterStatus     = document.getElementById('water-status');
+  const WATER_DELAY_MS  = 400;
+  let waterTimer = null;
+
+  // Identifies the area on screen; water stays valid across display modes
+  function waterKey() {
+    return `${state.seed}:${state.detailCI}:${state.detailCJ}:${state.detailPanI}:${state.detailPanJ}`;
+  }
+
+  function clearWater() {
+    clearTimeout(waterTimer);
+    detailWater.removeAttribute('src');
+    delete detailWater.dataset.key;
+    delete detailWater.dataset.ready;
+    detailWater.style.display = 'none';
+    waterStatus.textContent = '';
+  }
+
+  // Asks for the water layer shortly after the map lands, unless it is already here
+  function requestWater() {
+    clearTimeout(waterTimer);
+    if (!waterToggle.checked || state.detailCI === null) return;
+    const key = waterKey();
+    if (detailWater.dataset.key === key) {
+      if (detailWater.dataset.ready) detailWater.style.display = 'block';
+      return;
+    }
+    waterTimer = setTimeout(() => {
+      const { seed, detailCI: ci, detailCJ: cj, detailPanI: pi, detailPanJ: pj } = state;
+      waterStatus.textContent = 'rivers…';
+      detailWater.dataset.key = key;
+      delete detailWater.dataset.ready;
+      detailWater.src = `/api/detail_water.png?ci=${ci}&cj=${cj}&detail_size=${DETAIL_SIZE}&pan_i=${pi}&pan_j=${pj}&_s=${seed}`;
+    }, WATER_DELAY_MS);
+  }
+
+  detailWater.onload = () => {
+    if (detailWater.dataset.key !== waterKey()) return;
+    detailWater.dataset.ready = '1';
+    detailWater.style.display = waterToggle.checked ? 'block' : 'none';
+    waterStatus.textContent = '';
+  };
+  detailWater.onerror = () => {
+    if (detailWater.dataset.key !== waterKey()) return;
+    delete detailWater.dataset.key;
+    waterStatus.textContent = '';
+  };
+
+  waterToggle.addEventListener('change', () => {
+    if (waterToggle.checked) {
+      requestWater();
+    } else {
+      clearTimeout(waterTimer);
+      detailWater.style.display = 'none';
+      waterStatus.textContent = '';
+    }
+  });
+  const biomeLegend     = document.getElementById('biome-legend');
+  const mapArea         = document.querySelector('.map-area');
+  const legendToggle    = document.getElementById('biome-legend-toggle');
+  try {
+    state.legendOpen = localStorage.getItem('td-biome-legend') !== 'closed';
+  } catch (_) {}
+
+  function updateBiomeLayout() {
+    const biomes = state.detailMode === 'biomes';
+    const open = biomes && state.legendOpen;
+    legendToggle.style.display = biomes ? '' : 'none';
+    legendToggle.classList.toggle('active', open);
+    biomeLegend.classList.toggle('visible', open);
+    mapArea.classList.toggle('wide-detail', open);
+  }
+
+  legendToggle.addEventListener('click', () => {
+    state.legendOpen = !state.legendOpen;
+    try {
+      localStorage.setItem('td-biome-legend', state.legendOpen ? 'open' : 'closed');
+    } catch (_) {}
+    updateBiomeLayout();
+  });
   const statusBar       = document.getElementById('status-bar');
   const tooltip         = document.getElementById('hover-tooltip');
   const coordRows       = document.getElementById('coord-rows');
@@ -845,6 +1004,12 @@
   function loadDetail() {
     if (state.detailCI === null) return;
     state.detailRaw = null;
+    state.detailBiomes = null;
+    if (state.detailMode === 'biomes') {
+      biomeLegend.innerHTML = '<div class="bl-empty">Classifying…</div>';
+    }
+    updateBiomeLayout();
+    if (detailWater.dataset.key !== waterKey()) clearWater();
     detailImg.style.display = 'block';
     detailImg.classList.add('loading');
     detailSpinner.classList.add('active');
@@ -870,6 +1035,35 @@
     } catch (_) {}
   }
 
+  async function loadDetailBiomes() {
+    if (state.detailCI === null || state.detailMode !== 'biomes') return;
+    const { detailCI: ci, detailCJ: cj, detailPanI: pi, detailPanJ: pj, seed } = state;
+    try {
+      const res = await fetch(`/api/detail_biomes?ci=${ci}&cj=${cj}&detail_size=${DETAIL_SIZE}&pan_i=${pi}&pan_j=${pj}&_s=${seed}`);
+      const data = await res.json();
+      const bytes = Uint8Array.from(atob(data.ids), c => c.charCodeAt(0));
+      const byId = new Map(data.legend.map(row => [row.id, row]));
+      state.detailBiomes = { ids: new Int16Array(bytes.buffer), byId, h: data.h, w: data.w };
+      renderBiomeLegend(data.legend);
+    } catch (_) {
+      biomeLegend.innerHTML = '<div class="bl-empty">Could not load biomes</div>';
+    }
+  }
+
+  function renderBiomeLegend(legend) {
+    const blocks = Math.round(DETAIL_SIZE * state.coordScale);
+    const centerI = state.detailCI * 256 + state.detailPanI;
+    const centerJ = state.detailCJ * 256 + state.detailPanJ;
+    const x = Math.round(centerJ * state.coordScale), z = Math.round(centerI * state.coordScale);
+    let html = `<div class="bl-title">x ${x}  z ${z}  (${blocks} blocks)</div>`;
+    legend.forEach(row => {
+      const pct = row.share * 100;
+      const txt = pct >= 0.05 ? pct.toFixed(1) + '%' : '<0.1%';
+      html += `<div class="bl-row" data-id="${row.id}"><span class="bl-swatch" style="background:${row.color}"></span><span>${row.name}</span><span class="bl-share">${txt}</span></div>`;
+    });
+    biomeLegend.innerHTML = html;
+  }
+
   // ── Image events ──
   coarseImg.onload = () => {
     coarseImg.classList.remove('loading');
@@ -888,6 +1082,8 @@
     detailImg.classList.remove('loading');
     detailSpinner.classList.remove('active');
     loadDetailRaw();
+    loadDetailBiomes();
+    requestWater();
   };
   detailImg.onerror = () => {
     detailImg.classList.remove('loading');
@@ -952,27 +1148,43 @@
     statusBar.textContent = `Selected tile ci=${state.detailCI}, cj=${state.detailCJ}`;
   });
 
+  function detailCell(e, h, w) {
+    const rect = detailImg.getBoundingClientRect();
+    const scale = Math.min(rect.width / w, rect.height / h);
+    const left = rect.left + (rect.width - w * scale) / 2;
+    const top = rect.top + (rect.height - h * scale) / 2;
+    return { col: Math.floor((e.clientX - left) / scale), row: Math.floor((e.clientY - top) / scale) };
+  }
+
   // ── Detail hover ──
   detailImg.addEventListener('mousemove', (e) => {
     if (!state.detailRaw) return;
     const { elev, temp, h, w } = state.detailRaw;
-    const rect = detailImg.getBoundingClientRect();
-    const col = Math.floor((e.clientX - rect.left) / rect.width  * w);
-    const row = Math.floor((e.clientY - rect.top)  / rect.height * h);
+    const { row, col } = detailCell(e, h, w);
     if (row < 0 || row >= h || col < 0 || col >= w) return;
     const idx = row * w + col;
-    let html = `<div class="ht-row"><span class="ht-label">Elevation</span><span class="ht-val">${elev[idx]} m</span></div>`;
+    let html = '';
+    const biomes = state.detailBiomes;
+    let hoverId = null;
+    if (biomes && biomes.h === h && biomes.w === w) {
+      hoverId = biomes.ids[idx];
+      const row = biomes.byId.get(hoverId);
+      if (row) html += `<div class="ht-row"><span class="ht-label">Biome</span><span class="ht-val"><span class="ht-swatch" style="background:${row.color}"></span>${row.name}</span></div>`;
+    }
+    html += `<div class="ht-row"><span class="ht-label">Elevation</span><span class="ht-val">${elev[idx]} m</span></div>`;
     if (temp) html += `<div class="ht-row"><span class="ht-label">Temperature</span><span class="ht-val">${temp[idx].toFixed(2)}°</span></div>`;
     showTooltip(e, html);
+    biomeLegend.querySelectorAll('.bl-row').forEach(r => r.classList.toggle('hl', hoverId !== null && +r.dataset.id === hoverId));
   });
-  detailImg.addEventListener('mouseleave', hideTooltip);
+  detailImg.addEventListener('mouseleave', () => {
+    hideTooltip();
+    biomeLegend.querySelectorAll('.bl-row.hl').forEach(r => r.classList.remove('hl'));
+  });
 
   detailImg.addEventListener('click', (e) => {
     if (!state.detailRaw) return;
     const { h, w } = state.detailRaw;
-    const rect = detailImg.getBoundingClientRect();
-    const col = Math.floor((e.clientX - rect.left) / rect.width  * w);
-    const row = Math.floor((e.clientY - rect.top)  / rect.height * h);
+    const { row, col } = detailCell(e, h, w);
     if (row < 0 || row >= h || col < 0 || col >= w) return;
     showDetailCoords(row, col);
   });
@@ -994,11 +1206,12 @@
   }
 
   // ── Detail mode ──
-  ['relief', 'elevation', 'temperature'].forEach(mode => {
+  ['relief', 'elevation', 'temperature', 'biomes'].forEach(mode => {
     document.getElementById(`mode-${mode}`).addEventListener('click', () => {
       state.detailMode = mode;
-      ['relief','elevation','temperature'].forEach(m =>
+      ['relief','elevation','temperature','biomes'].forEach(m =>
         document.getElementById(`mode-${m}`).classList.toggle('active', m === mode));
+      updateBiomeLayout();
       loadDetail();
     });
   });
@@ -1035,6 +1248,10 @@
     state.detailCI = state.detailCJ = null;
     state.detailPanI = state.detailPanJ = 0;
     state.detailRaw = null;
+    state.detailBiomes = null;
+    biomeLegend.innerHTML = '';
+    updateBiomeLayout();
+    clearWater();
     detailImg.style.display = 'none';
     detailPlaceholder.style.display = '';
     detailInfo.textContent = 'click coarse map to load';

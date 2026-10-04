@@ -117,6 +117,7 @@ public class TerrainDiffusionBiomeSource extends BiomeSource {
             }
         }
 
+        SnowFreeBiomes.set(List.of());
         if (resolved.isEmpty()) {
             TerralithCompat.setActive(false);
             return;
@@ -137,6 +138,7 @@ public class TerrainDiffusionBiomeSource extends BiomeSource {
         }
 
         biomes.putAll(resolved);
+        SnowFreeBiomes.set(List.of(resolved.get(TerralithBiomeIds.SCARLET_MOUNTAINS).value()));
         TerralithCompat.setActive(true);
         LOG.info("Terralith detected: added {} biomes to the terrain-diffusion palette", resolved.size());
     }

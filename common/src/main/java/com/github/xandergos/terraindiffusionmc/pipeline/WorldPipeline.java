@@ -74,13 +74,22 @@ public final class WorldPipeline implements AutoCloseable {
     private final long cacheLimitBytes =
             TerrainDiffusionConfig.tileCacheMb() * 1024L * 1024L;
 
+    final RiverHydrology.RegionCache hydrology = new RiverHydrology.RegionCache();
+    private final boolean readOnlyDisk;
+
     final InfiniteTensor coarse;
     final InfiniteTensor latents;
     final InfiniteTensor residual;
 
     // Uses models shared from PipelineModels
     public WorldPipeline(long seed, PipelineModels models) {
+        this(seed, models, false);
+    }
+
+    // Uses shared models; readOnlyDisk opens the disk cache for reading only
+    public WorldPipeline(long seed, PipelineModels models, boolean readOnlyDisk) {
         this.seed = seed & 0xFFFFFFFFFFFFFFFFL;
+        this.readOnlyDisk = readOnlyDisk;
         this.coarseModel = models.getCoarseModel();
         this.baseModel = models.getBaseModel();
         this.decoderModel = models.getDecoderModel();
@@ -96,6 +105,7 @@ public final class WorldPipeline implements AutoCloseable {
     // Loads and owns its own models
     public WorldPipeline(long seed) {
         this.seed = seed & 0xFFFFFFFFFFFFFFFFL;
+        this.readOnlyDisk = false;
         ModelAssetManager.ensureAssetsReady();
         this.coarseModel = new OnnxModel(ModelAssetManager.resolveAssetPath("coarse_model.onnx"), "coarse");
         this.baseModel = new OnnxModel(ModelAssetManager.resolveAssetPath("base_model.onnx"), "base");
@@ -116,6 +126,7 @@ public final class WorldPipeline implements AutoCloseable {
         this.seed = s;
         this.syntheticMapFactory = new SyntheticMapFactory(s);
         tileStore.clearAllCaches();
+        hydrology.clear();
         attachDiskCache();
     }
 
@@ -543,7 +554,7 @@ public final class WorldPipeline implements AutoCloseable {
         }
 
         // Bilinear upsample to native resolution
-        float[] climate = new float[5 * H * W];
+        float[] climate = new float[6 * H * W];
         for (int r = 0; r < H; r++) {
             // fractional index into lbt/centralCoarse arrays (matches Python's u = (ii+0.5)/S - ci1 + 0.5)
             float gridY    = (i1 + r + 0.5f) / S - ci1 + 0.5f;
@@ -561,6 +572,7 @@ public final class WorldPipeline implements AutoCloseable {
                 climate[2 * H * W + r * W + c] = bilinearSample2D(centralCoarse[4], cenH, cenW, cenGridY, cenGridX);
                 climate[3 * H * W + r * W + c] = bilinearSample2D(centralCoarse[5], cenH, cenW, cenGridY, cenGridX);
                 climate[4 * H * W + r * W + c] = beta;
+                climate[5 * H * W + r * W + c] = bilinearSample2D(centralCoarse[2], cenH, cenW, cenGridY, cenGridX);
             }
         }
         return climate;
@@ -651,7 +663,9 @@ public final class WorldPipeline implements AutoCloseable {
         try {
             Path base = cacheRootOverride != null ? cacheRootOverride : PlatformPaths.gameDir();
             Path root = base.resolve("terradiff-cache").resolve(Long.toUnsignedString(seed));
-            diskCache = DiskTileCache.open(root, pipelineFingerprint());
+            diskCache = readOnlyDisk
+                    ? DiskTileCache.openReadOnly(root, pipelineFingerprint())
+                    : DiskTileCache.open(root, pipelineFingerprint());
             tileStore.setDiskCache(diskCache);
         } catch (RuntimeException e) {
             LOG.warn("Terrain cache not attached: {}", e.toString());

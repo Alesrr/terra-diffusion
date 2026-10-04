@@ -5,10 +5,34 @@ import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
 // A lazy, sliding-window "infinite" tensor backed by a MemoryTileStore
 public class InfiniteTensor {
+
+    private static final ThreadLocal<BooleanSupplier> CANCELLED = new ThreadLocal<>();
+
+    // Runs task with window computation abandoned between windows once cancelled turns true
+    public static <T> T cancellable(BooleanSupplier cancelled, Supplier<T> task) {
+        BooleanSupplier previous = CANCELLED.get();
+        CANCELLED.set(cancelled);
+        try {
+            return task.get();
+        } finally {
+            CANCELLED.set(previous);
+        }
+    }
+
+    // Throws CancellationException inside a cancellable task whose flag has turned true
+    public static void throwIfCancelled() {
+        BooleanSupplier cancelled = CANCELLED.get();
+        if (cancelled != null && cancelled.getAsBoolean()) {
+            throw new CancellationException();
+        }
+    }
 
     final String id;
 
@@ -143,6 +167,7 @@ public class InfiniteTensor {
             computeBatched(pending);
         } else {
             for (int[] windowIndex : pending) {
+                throwIfCancelled();
                 computeSingle(windowIndex);
             }
         }
@@ -168,6 +193,7 @@ public class InfiniteTensor {
     private void computeBatched(List<int[]> windowIndices) {
         int from = 0;
         while (from < windowIndices.size()) {
+            throwIfCancelled();
             int to = Math.min(from + batchSize, windowIndices.size());
             List<int[]> batch = windowIndices.subList(from, to);
 

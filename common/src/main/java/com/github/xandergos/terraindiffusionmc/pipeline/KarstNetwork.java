@@ -36,9 +36,13 @@ public final class KarstNetwork {
     final int wtOriginX, wtOriginZ, wtStep, wtNX, wtNZ;
     final short[] wtY;
 
+    // Endpoint bounds per segment, for skipping segments that cannot be nearest
+    final float[] loX, hiX, loY, hiY, loZ, hiZ;
+
     private KarstNetwork() {
         this.count = 0;
         this.ax = this.ay = this.az = this.bx = this.by = this.bz = new float[0];
+        this.loX = this.hiX = this.loY = this.hiY = this.loZ = this.hiZ = new float[0];
         this.rh = this.rv = new float[0];
         this.zone = new byte[0];
         this.riverY = new float[0];
@@ -71,6 +75,15 @@ public final class KarstNetwork {
         this.wtOriginX = wtOriginX; this.wtOriginZ = wtOriginZ;
         this.wtStep = wtStep; this.wtNX = wtNX; this.wtNZ = wtNZ;
         this.wtY = wtY;
+
+        this.loX = new float[count]; this.hiX = new float[count];
+        this.loY = new float[count]; this.hiY = new float[count];
+        this.loZ = new float[count]; this.hiZ = new float[count];
+        for (int s = 0; s < count; s++) {
+            loX[s] = Math.min(ax[s], bx[s]); hiX[s] = Math.max(ax[s], bx[s]);
+            loY[s] = Math.min(ay[s], by[s]); hiY[s] = Math.max(ay[s], by[s]);
+            loZ[s] = Math.min(az[s], bz[s]); hiZ[s] = Math.max(az[s], bz[s]);
+        }
 
         int cells = nx * nz;
         int[] counts = new int[cells + 1];
@@ -133,26 +146,56 @@ public final class KarstNetwork {
 
     // Signed distance to the nearest conduit wall in blocks; negative inside a conduit
     public float density(float x, float y, float z) {
-        return density(x, y, z, false);
+        return density(x, y, z, false, FAR);
+    }
+
+    // Exact where the distance is below limit; otherwise some value at or above limit
+    public float density(float x, float y, float z, float limit) {
+        return density(x, y, z, false, limit);
     }
 
     // Distance considering only doline shafts
     public float dolineDensity(float x, float y, float z) {
-        return density(x, y, z, true);
+        return density(x, y, z, true, FAR);
+    }
+
+    // Doline distance, exact below limit
+    public float dolineDensity(float x, float y, float z, float limit) {
+        return density(x, y, z, true, limit);
+    }
+
+    // Allowance for float rounding when ruling a segment out, growing with coordinate size
+    private static float slack(float x, float y, float z) {
+        return 0.02f + 4.0e-6f * (Math.abs(x) + Math.abs(y) + Math.abs(z));
+    }
+
+    // Lower bound on a segment's signed distance, from its endpoint bounds
+    private float lowerBound(int s, float x, float y, float z, float rhs, float rvs) {
+        float out = Math.max(Math.max(loX[s] - x, x - hiX[s]), Math.max(loZ[s] - z, z - hiZ[s])) / rhs;
+        float up = Math.max(loY[s] - y, y - hiY[s]) / rvs;
+        return (Math.max(out, up) - 1f) * (rhs < rvs ? rhs : rvs);
     }
 
     // Distance considering only the river conduit itself
     public float riverDensity(float x, float y, float z) {
+        return riverDensity(x, y, z, FAR);
+    }
+
+    // River conduit distance, exact below limit
+    public float riverDensity(float x, float y, float z, float limit) {
         if (count == 0) return FAR;
         int c = cellX(x);
         int d = cellZ(z);
         if (c < 0 || d < 0 || c >= nx || d >= nz) return FAR;
         int cell = d * nx + c;
         int from = cellStart[cell], to = cellStart[cell + 1];
+        float slack = slack(x, y, z);
         float best = FAR;
         for (int k = from; k < to; k++) {
             int s = cellItems[k];
             if (zone[s] != ZONE_RIVER) continue;
+            if (rh[s] > 0.01f && rv[s] > 0.01f
+                    && lowerBound(s, x, y, z, rh[s], rv[s]) > Math.min(best, limit) + slack) continue;
             float ex = bx[s] - ax[s], ey = by[s] - ay[s], ez = bz[s] - az[s];
             float len2 = ex * ex + ey * ey + ez * ez;
             float t = 0f;
@@ -175,7 +218,7 @@ public final class KarstNetwork {
         return best;
     }
 
-    private float density(float x, float y, float z, boolean dolinesOnly) {
+    private float density(float x, float y, float z, boolean dolinesOnly, float limit) {
         if (count == 0) return FAR;
         int c = cellX(x);
         int d = cellZ(z);
@@ -185,10 +228,13 @@ public final class KarstNetwork {
         if (from == to) return FAR;
         if (y < cellYMin[cell] || y > cellYMax[cell]) return FAR;
 
+        float slack = slack(x, y, z);
         float best = FAR;
         for (int k = from; k < to; k++) {
             int s = cellItems[k];
             if (dolinesOnly && zone[s] != ZONE_DOLINE) continue;
+            if (rh[s] > 0.01f && rv[s] > 0.01f
+                    && lowerBound(s, x, y, z, rh[s], rv[s]) > Math.min(best, limit) + slack) continue;
             float ex = bx[s] - ax[s], ey = by[s] - ay[s], ez = bz[s] - az[s];
             float len2 = ex * ex + ey * ey + ez * ez;
             float t = 0f;

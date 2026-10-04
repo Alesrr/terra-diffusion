@@ -2,6 +2,7 @@ package com.github.xandergos.terraindiffusionmc.pipeline;
 
 import com.github.xandergos.terraindiffusionmc.config.TerrainDiffusionConfig;
 import com.github.xandergos.terraindiffusionmc.infinitetensor.FloatTensor;
+import com.github.xandergos.terraindiffusionmc.infinitetensor.InfiniteTensor;
 import com.github.xandergos.terraindiffusionmc.world.WorldScaleManager;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,6 +14,8 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Comparator;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CancellationException;
+import java.util.function.BooleanSupplier;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Future;
 import java.util.concurrent.PriorityBlockingQueue;
@@ -76,6 +79,8 @@ public final class LocalTerrainProvider {
         public final byte[][] climateH;
         public final byte[][] climateE;
         public KarstNetwork karst = KarstNetwork.EMPTY;
+        // Lowest surface Y around each column, filled on first use by the density function
+        public volatile short[] sideSurface;
         public final int width;
         public final int height;
 
@@ -109,6 +114,8 @@ public final class LocalTerrainProvider {
     // The main thread is stalled, so the game is visibly frozen until this tile lands
     private static final int PRIORITY_URGENT = 0;
     private static final int PRIORITY_BLOCKING = 5;
+    // Explorer water runs only when nothing else is waiting
+    private static final int PRIORITY_BACKGROUND = 10;
     // Stops speculative work from growing without bound if the player outruns the generator
     private static final AtomicLong TASK_SEQ = new AtomicLong();
 
@@ -159,24 +166,35 @@ public final class LocalTerrainProvider {
     }
 
     private static volatile LocalTerrainProvider INSTANCE;
-    private static long instanceSeed;
+    private static volatile long instanceSeed;
+
+    private static LocalTerrainProvider EXPLORER;
+    private static volatile long explorerSeed;
+    private static volatile String explorerView = "";
+    private static volatile int explorerGeneration = -1;
+    private static volatile int worldGeneration;
 
     private final WorldPipeline pipeline;
 
     private static final Object INIT_LOCK = new Object();
 
-    private LocalTerrainProvider(long seed, PipelineModels models) {
-        this.pipeline = new WorldPipeline(seed, models);
+    private LocalTerrainProvider(long seed, PipelineModels models, boolean readOnlyDisk) {
+        this.pipeline = new WorldPipeline(seed, models, readOnlyDisk);
+    }
+
+    private static PipelineModels loadedModels() {
+        PipelineModels.awaitLoad();
+        PipelineModels models = PipelineModels.getInstance();
+        if (models == null) throw new IllegalStateException("PipelineModels failed to load");
+        return models;
     }
 
     public static synchronized void init(long seed) {
         DeepCaverns.setSeed(seed);
         CaveBiomes.setSeed(seed);
-        PipelineModels.awaitLoad();
-        PipelineModels models = PipelineModels.getInstance();
-        if (models == null) throw new IllegalStateException("PipelineModels failed to load");
+        PipelineModels models = loadedModels();
         if (INSTANCE == null) {
-            INSTANCE = new LocalTerrainProvider(seed, models);
+            INSTANCE = new LocalTerrainProvider(seed, models, false);
             instanceSeed = seed;
         } else if (instanceSeed != seed) {
             INSTANCE.pipeline.setSeed(seed);
@@ -184,6 +202,7 @@ public final class LocalTerrainProvider {
             CACHE.clear();
             PENDING.clear();
         }
+        worldGeneration++;
     }
 
     public static LocalTerrainProvider getInstance() {
@@ -191,10 +210,7 @@ public final class LocalTerrainProvider {
 
         synchronized(INIT_LOCK) {
             if (INSTANCE != null) return INSTANCE;
-            PipelineModels.awaitLoad();
-            PipelineModels models = PipelineModels.getInstance();
-            if (models == null) throw new IllegalStateException("PipelineModels failed to load");
-            INSTANCE = new LocalTerrainProvider(0L, models);
+            INSTANCE = new LocalTerrainProvider(0L, loadedModels(), false);
             instanceSeed = 0L;
         }
 
@@ -210,45 +226,95 @@ public final class LocalTerrainProvider {
         return instanceSeed;
     }
 
-    public static float[][] getPipelineData(int i1, int j1, int i2, int j2, boolean withClimate) throws Exception {
-        return submitToInferenceThread(() -> getInstance().pipeline.get(i1, j1, i2, j2, withClimate));
+    // Changes on every world load, so position-keyed caches know to refill
+    public static int generation() {
+        return worldGeneration;
     }
 
-    public static float[][] getPipelineDataWithWater(int i1, int j1, int i2, int j2) throws Exception {
-        return submitToInferenceThread(() -> {
-            LocalTerrainProvider provider = getInstance();
-            int H = i2 - i1, W = j2 - j1;
-            int scale = WorldScaleManager.getCurrentScale();
-
-            float[][] out = provider.pipeline.get(i1, j1, i2, j2, true);
-            float[] elev = out[0];
-            float[] climate = out[1];
-
-            float[][] carved = provider.carveWater(elev, elev, climate, i1, j1, H, W,
-                    NATIVE_RESOLUTION / scale, scale, scale);
-            return new float[][]{carved[0], climate, carved[1]};
-        });
+    // The explorer's own pipeline, recreated on the world's seed after each world load; inference thread only
+    private static LocalTerrainProvider explorer() {
+        int generation = worldGeneration;
+        if (EXPLORER == null || explorerGeneration != generation) {
+            if (EXPLORER != null) {
+                EXPLORER.pipeline.close();
+            }
+            long seed = instanceSeed;
+            EXPLORER = new LocalTerrainProvider(seed, loadedModels(), true);
+            EXPLORER.pipeline.hydrology.buildSeamNeighbours(false);
+            explorerSeed = seed;
+            explorerGeneration = generation;
+        }
+        return EXPLORER;
     }
 
-    public static FloatTensor getPipelineCoarse(int ci0, int cj0, int ci1, int cj1) throws Exception {
-        return submitToInferenceThread(() -> getInstance().pipeline.getCoarseSlice(ci0, cj0, ci1, cj1));
+    public static long explorerSeed() {
+        return explorerGeneration == worldGeneration ? explorerSeed : instanceSeed;
     }
 
-    public static void changeSeedFromExplorer(long newSeed) throws Exception {
+    public static void setExplorerSeed(long newSeed) throws Exception {
         submitToInferenceThread(() -> {
-            LocalTerrainProvider provider = getInstance();
-            provider.pipeline.setSeed(newSeed);
-            instanceSeed = newSeed;
-            CACHE.clear();
-            PENDING.clear();
+            explorer().pipeline.setSeed(newSeed);
+            explorerSeed = newSeed;
             return null;
         });
     }
 
-    public static long generateRandomSeedFromExplorer() throws Exception {
+    public static long randomExplorerSeed() throws Exception {
         long newSeed = new Random().nextLong();
-        changeSeedFromExplorer(newSeed);
+        setExplorerSeed(newSeed);
         return newSeed;
+    }
+
+    // Frees the explorer's pipeline; the next explorer request rebuilds it on the world's seed
+    public static void releaseExplorer() {
+        INFERENCE_EXECUTOR.execute(new PriorityTask<Void>(() -> {
+            if (EXPLORER != null) {
+                EXPLORER.pipeline.close();
+                EXPLORER = null;
+            }
+            explorerGeneration = -1;
+            return null;
+        }, PRIORITY_BLOCKING));
+    }
+
+    public static float[][] explorerData(int i1, int j1, int i2, int j2, boolean withClimate) throws Exception {
+        return submitToInferenceThread(() -> explorer().pipeline.get(i1, j1, i2, j2, withClimate));
+    }
+
+    public static FloatTensor explorerCoarse(int ci0, int cj0, int ci1, int cj1) throws Exception {
+        return submitToInferenceThread(() -> explorer().pipeline.getCoarseSlice(ci0, cj0, ci1, cj1));
+    }
+
+    // The explorer view most recently asked for; water for any other view is abandoned
+    public static void markExplorerView(String view) {
+        explorerView = view;
+    }
+
+    // Returns {bed elevation, water surface} for an explorer view, or null if the view changed first
+    public static float[][] explorerWater(int i1, int j1, int i2, int j2, String view) throws Exception {
+        BooleanSupplier stale = () -> !view.equals(explorerView);
+        PriorityTask<float[][]> task = new PriorityTask<>(() -> {
+            if (stale.getAsBoolean()) return null;
+            try {
+                return InfiniteTensor.cancellable(stale, () -> {
+                    LocalTerrainProvider provider = explorer();
+                    int H = i2 - i1, W = j2 - j1;
+                    int scale = WorldScaleManager.getCurrentScale();
+                    float blockM = NATIVE_RESOLUTION / scale;
+                    RiverHydrology.prepare(provider.pipeline, i1, j1, i2, j2, blockM);
+                    float[][] out = provider.pipeline.get(i1, j1, i2, j2, true);
+                    return provider.carveWater(out[0], out[0], out[1], i1, j1, H, W, blockM, scale, scale);
+                });
+            } catch (CancellationException e) {
+                return null;
+            }
+        }, PRIORITY_BACKGROUND);
+        INFERENCE_EXECUTOR.execute(task);
+        return task.get();
+    }
+
+    public static FloatTensor getPipelineCoarse(int ci0, int cj0, int ci1, int cj1) throws Exception {
+        return submitToInferenceThread(() -> getInstance().pipeline.getCoarseSlice(ci0, cj0, ci1, cj1));
     }
 
     private static <T> T submitToInferenceThread(Callable<T> task) throws Exception {
@@ -457,8 +523,9 @@ public final class LocalTerrainProvider {
                                             int cropI1, int cropJ1, int H, int W,
                                             int scale, int upH, int upW) {
         if (climNative == null) return null;
-        float[] result = new float[4 * H * W];
-        for (int ch = 0; ch < 4; ch++) {
+        int channels = climNative.length / (nH * nW);
+        float[] result = new float[channels * H * W];
+        for (int ch = 0; ch < channels; ch++) {
             float[][] chNative = new float[nH][nW];
             for (int r = 0; r < nH; r++)
                 System.arraycopy(climNative, ch * nH * nW + r * nW, chNative[r], 0, nW);
@@ -499,6 +566,7 @@ public final class LocalTerrainProvider {
         int coordScaleToNative = coordScale == 1 ? scale : 1;
 
         for (int r = 0; r < H; r++) {
+            InfiniteTensor.throwIfCancelled();
             for (int c = 0; c < W; c++) {
                 int idx = r * W + c;
 
@@ -624,18 +692,20 @@ public final class LocalTerrainProvider {
         }
     }
 
+    private static final int BREACH_PASSES =
+            Integer.parseInt(System.getProperty("terradiff.breachPasses", "250"));
+
     private static void breachDams(float[] water, int H, int W, float blockM) {
         int n = H * W;
         int[] lab = new int[n];
         int[] st = new int[n];
+        int[] open = new int[n];
         boolean[] drains = new boolean[n];
         int breached = 0;
-        int passes = Integer.parseInt(System.getProperty("terradiff.breachPasses", "250"));
-        for (int pass = 0; pass < passes; pass++) {
+        for (int pass = 0; pass < BREACH_PASSES; pass++) {
             java.util.Arrays.fill(lab, 0);
             java.util.Arrays.fill(drains, false);
-            java.util.PriorityQueue<int[]> pq = new java.util.PriorityQueue<>(
-                    (p, q) -> Float.compare(water[p[0]], water[q[0]]));
+            int top = 0;
             int bodies = 0;
             for (int s = 0; s < n; s++) {
                 if (lab[s] != 0 || water[s] <= WaterNetwork.NO_WATER) {
@@ -658,22 +728,16 @@ public final class LocalTerrainProvider {
                     if (c < W - 1 && water[i + 1] > WaterNetwork.NO_WATER && lab[i + 1] == 0) { lab[i + 1] = bodies; st[sp++] = i + 1; }
                 }
                 drains[loAt] = true;
-                pq.add(new int[]{loAt});
+                open[top++] = loAt;
             }
-            while (!pq.isEmpty()) {
-                int i = pq.poll()[0];
+            while (top > 0) {
+                int i = open[--top];
                 int r = i / W, c = i % W;
-                int[] nbs = {r > 0 ? i - W : -1, r < H - 1 ? i + W : -1,
-                             c > 0 ? i - 1 : -1, c < W - 1 ? i + 1 : -1};
-                for (int j : nbs) {
-                    if (j < 0 || water[j] <= WaterNetwork.NO_WATER || drains[j]) {
-                        continue;
-                    }
-                    if (water[j] >= water[i] - 0.001f) {
-                        drains[j] = true;
-                        pq.add(new int[]{j});
-                    }
-                }
+                float from = water[i] - 0.001f;
+                if (r > 0) top = drainInto(water, drains, open, top, i - W, from);
+                if (r < H - 1) top = drainInto(water, drains, open, top, i + W, from);
+                if (c > 0) top = drainInto(water, drains, open, top, i - 1, from);
+                if (c < W - 1) top = drainInto(water, drains, open, top, i + 1, from);
             }
 
             boolean cut = false;
@@ -682,17 +746,12 @@ public final class LocalTerrainProvider {
                     continue;
                 }
                 int r = i / W, c = i % W;
-                int[] nbs = {r > 0 ? i - W : -1, r < H - 1 ? i + W : -1,
-                             c > 0 ? i - 1 : -1, c < W - 1 ? i + 1 : -1};
+                float above = water[i] + 0.001f;
                 float spill = Float.MAX_VALUE;
-                for (int j : nbs) {
-                    if (j < 0 || water[j] <= WaterNetwork.NO_WATER) {
-                        continue;
-                    }
-                    if (water[j] > water[i] + 0.001f && water[j] < spill) {
-                        spill = water[j];
-                    }
-                }
+                if (r > 0) spill = spillOver(water, i - W, above, spill);
+                if (r < H - 1) spill = spillOver(water, i + W, above, spill);
+                if (c > 0) spill = spillOver(water, i - 1, above, spill);
+                if (c < W - 1) spill = spillOver(water, i + 1, above, spill);
                 if (spill != Float.MAX_VALUE) {
                     water[i] = spill;
                     breached++;
@@ -706,6 +765,20 @@ public final class LocalTerrainProvider {
         if (Boolean.getBoolean("terradiff.diag")) {
             System.err.printf("diag breach: cut %d damming columns%n", breached);
         }
+    }
+
+    private static int drainInto(float[] water, boolean[] drains, int[] open, int top, int j, float from) {
+        if (water[j] <= WaterNetwork.NO_WATER || drains[j] || !(water[j] >= from)) {
+            return top;
+        }
+        drains[j] = true;
+        open[top++] = j;
+        return top;
+    }
+
+    private static float spillOver(float[] water, int j, float above, float spill) {
+        float v = water[j];
+        return v > WaterNetwork.NO_WATER && v > above && v < spill ? v : spill;
     }
 
     private static void relaxWaterSteps(float[] water, float[] bed, boolean[] fall,

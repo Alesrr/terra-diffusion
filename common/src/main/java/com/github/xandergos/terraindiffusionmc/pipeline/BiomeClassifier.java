@@ -44,6 +44,14 @@ public final class BiomeClassifier {
 
     private static final float TREELINE_MEAN_FULL_C = -2f;
 
+    // Snow cover needs this temperature after noise
+    private static final float SNOW_APPEARS_C = -3f;
+
+    // Ice-surfaced mountain biomes need both of these
+    static final float FROZEN_SURFACE_C = -12f;
+
+    private static final float FROZEN_SURFACE_M = 4000f;
+
     private static final float SNOW_TIER1_START_C = -5f;
 
     private static final float SNOW_TIER1_END_C = -7.5f;
@@ -74,6 +82,12 @@ public final class BiomeClassifier {
     public static short[] classify(float[] elev, float[] climate, int i0, int j0,
                                     float[] elevPadded, int H, int W, float pixelSizeM,
                                     byte[] snowLayersOut, boolean[] riverMask) {
+        return classify(elev, climate, i0, j0, 1, elevPadded, H, W, pixelSizeM, snowLayersOut, riverMask);
+    }
+
+    public static short[] classify(float[] elev, float[] climate, int i0, int j0, int coordStep,
+                                    float[] elevPadded, int H, int W, float pixelSizeM,
+                                    byte[] snowLayersOut, boolean[] riverMask) {
         short[] out = new short[H * W];
         for (int i = 0; i < H * W; i++) out[i] = PLAINS;
 
@@ -89,7 +103,7 @@ public final class BiomeClassifier {
         for (int r = 0; r < H; r++) {
             for (int c = 0; c < W; c++) {
                 int idx = r * W + c;
-                float nx = j0 + c, ny = i0 + r;
+                float nx = j0 + c * coordStep, ny = i0 + r * coordStep;
                 float tnc = TEMP_NOISE.GetNoise(nx, ny);
                 float tnf = TEMP_NOISE_FINE.GetNoise(nx, ny);
                 tempNoise[idx] = 0.4f * tnc + 0.2f * tnf;
@@ -109,6 +123,7 @@ public final class BiomeClassifier {
         // Process per-pixel
         TerrainSample sample = new TerrainSample();
         boolean useTerralith = TerralithCompat.isActive();
+        boolean regional = climate.length >= 6 * H * W;
 
         for (int r = 0; r < H; r++) {
             for (int c = 0; c < W; c++) {
@@ -125,11 +140,16 @@ public final class BiomeClassifier {
 
                 // Derived climate variables
                 float tStd     = tSeason / 100f;
-                float tEff     = Math.max(0f, temp + 0.5f * tStd);
-                float pet      = Math.max(250f, 250f + 25f * tEff + 0.7f * tEff * tEff);
+                float pet      = potentialEvaporation(temp, tStd);
                 float aridity  = precip / Math.max(1f, pet);
                 float seasonPenalty = 1f - 0.35f * Math.min(1f, pCV / 100f);
                 float treeMoisture = aridity * seasonPenalty;
+
+                float lapse = regional ? Math.max(MIN_LAPSE, -climate[4 * H * W + idx]) : MIN_LAPSE;
+                float tReg = regional ? climate[5 * H * W + idx] + tempNoise[idx] : temp;
+                float relElev = (tReg - temp) / lapse;
+                float moist = precip / potentialEvaporation(tReg, tStd) * seasonPenalty;
+                float frost = temp + FROST_NOISE * snowNoise[idx];
 
                 // Growing season
                 float amplitude = tStd * 1.414f;
@@ -184,7 +204,7 @@ public final class BiomeClassifier {
                 // Snow classification
                 float snowTemp = temp + snowNoise[idx];
                 boolean isSteep = slope > 0.78f;
-                boolean hasSnow = snowTemp < 0f && precip > 150f && !isSteep;
+                boolean hasSnow = snowTemp < SNOW_APPEARS_C && precip > 150f && !isSteep;
 
                 // Elevation/temp bands
                 boolean isOcean   = elevVal < 0f;
@@ -197,12 +217,16 @@ public final class BiomeClassifier {
                 boolean warm      = temp >= 20f && temp < 26f;
                 boolean hot       = temp >= 26f;
 
-                sample.worldX = j0 + c;
-                sample.worldZ = i0 + r;
+                sample.worldX = j0 + c * coordStep;
+                sample.worldZ = i0 + r * coordStep;
                 sample.elev = elevVal;
                 sample.altM = altM;
                 sample.slope = slope;
                 sample.temp = temp;
+                sample.tReg = tReg;
+                sample.relElev = relElev;
+                sample.moist = moist;
+                sample.frost = frost;
                 sample.tStd = tStd;
                 sample.precip = precip;
                 sample.pCV = pCV;
@@ -254,6 +278,11 @@ public final class BiomeClassifier {
         return out;
     }
 
+    // True where a mountain surface may be ice: frozen peaks, frozen cliffs, glacial chasm
+    static boolean frozenSurface(TerrainSample s) {
+        return s.temp < FROZEN_SURFACE_C && s.altM > FROZEN_SURFACE_M;
+    }
+
     private static byte snowDepthFor(TerrainSample s) {
         float temp = s.temp;
         if (temp > SNOW_TIER1_START_C) {
@@ -272,14 +301,21 @@ public final class BiomeClassifier {
         return (byte) Math.min(MAX_SNOW_DEPTH, depth);
     }
 
-    private static final float WARM_RIVER_MIN_C = 28f;
+    private static final float MIN_LAPSE = 0.003f;
+
+    private static final float FROST_NOISE = 0.3f;
+
+    private static float potentialEvaporation(float temp, float tStd) {
+        float tEff = Math.max(0f, temp + 0.5f * tStd);
+        return Math.max(250f, 250f + 25f * tEff + 0.7f * tEff * tEff);
+    }
 
     private static short riverBiome(TerrainSample s, boolean useTerralith) {
+        if (useTerralith) {
+            return TerralithClassifier.river(s);
+        }
         if (s.temp <= -3f) {
             return FROZEN_RIVER;
-        }
-        if (useTerralith && s.temp >= WARM_RIVER_MIN_C) {
-            return TerralithBiomeIds.WARM_RIVER;
         }
         return RIVER;
     }
@@ -294,7 +330,9 @@ public final class BiomeClassifier {
             else biome = OCEAN;
         } else if (s.mountains) {
             if (s.slopeBare) {
-                biome = s.hasSnow ? FROZEN_PEAKS : STONY_PEAKS;
+                if (frozenSurface(s)) biome = FROZEN_PEAKS;
+                else if (s.hasSnow) biome = SNOWY_SLOPES;
+                else biome = STONY_PEAKS;
             } else if (s.hasSnow) {
                 if (s.treesNone) biome = SNOWY_SLOPES;
                 else if (s.treesSparse || s.treesForest) biome = SNOWY_TAIGA_SPARSE;
@@ -340,7 +378,9 @@ public final class BiomeClassifier {
 
         // Bare slope override for lowland/non-mountain cliffs
         if (s.slopeBare && !s.isOcean && !s.mountains) {
-            biome = s.hasSnow ? FROZEN_PEAKS : STONY_PEAKS;
+            if (frozenSurface(s)) biome = FROZEN_PEAKS;
+            else if (s.hasSnow) biome = SNOWY_SLOPES;
+            else biome = STONY_PEAKS;
         }
 
         return biome;

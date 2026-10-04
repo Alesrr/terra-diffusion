@@ -3,6 +3,7 @@ package com.github.xandergos.terraindiffusionmc.explorer;
 import com.github.xandergos.terraindiffusionmc.config.TerrainDiffusionConfig;
 import com.github.xandergos.terraindiffusionmc.infinitetensor.FloatTensor;
 import com.github.xandergos.terraindiffusionmc.pipeline.LocalTerrainProvider;
+import com.github.xandergos.terraindiffusionmc.pipeline.TerralithCompat;
 import com.github.xandergos.terraindiffusionmc.pipeline.WaterNetwork;
 import com.github.xandergos.terraindiffusionmc.pipeline.WorldPipelineModelConfig;
 import com.github.xandergos.terraindiffusionmc.world.WorldScaleManager;
@@ -18,6 +19,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.math.BigInteger;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.nio.ByteBuffer;
@@ -43,6 +45,8 @@ public final class ExplorerServer {
     private static volatile HttpServer SERVER;
     private static volatile int SERVER_PORT = -1;
 
+    private static final int HTTP_THREADS = 4;
+
     private ExplorerServer() {}
 
 
@@ -61,8 +65,10 @@ public final class ExplorerServer {
         server.createContext("/api/coarse_stats", ExplorerServer::handleCoarseStats);
         server.createContext("/api/detail.png", ExplorerServer::handleDetailPng);
         server.createContext("/api/detail_raw", ExplorerServer::handleDetailRaw);
-        // Single-thread executor matches Python's threaded=False
-        server.setExecutor(Executors.newSingleThreadExecutor(r -> {
+        server.createContext("/api/detail_biomes", ExplorerServer::handleDetailBiomes);
+        server.createContext("/api/detail_water.png", ExplorerServer::handleDetailWater);
+        // Several handler threads so a slow water request never holds up an image
+        server.setExecutor(Executors.newFixedThreadPool(HTTP_THREADS, r -> {
             Thread t = new Thread(r, "terrain-explorer-http");
             t.setDaemon(true);
             return t;
@@ -79,6 +85,7 @@ public final class ExplorerServer {
             SERVER.stop(0);
             SERVER = null;
             SERVER_PORT = -1;
+            LocalTerrainProvider.releaseExplorer();
             LOG.info("Terrain explorer stopped.");
         }
     }
@@ -115,7 +122,7 @@ public final class ExplorerServer {
         if (!ex.getRequestMethod().equalsIgnoreCase("GET")) { send405(ex); return; }
         try {
             Map<String, Object> resp = new LinkedHashMap<>();
-            resp.put("seed", Long.toUnsignedString(LocalTerrainProvider.getSeed()));
+            resp.put("seed", Long.toUnsignedString(LocalTerrainProvider.explorerSeed()));
             resp.put("channels", Arrays.asList(CHANNEL_NAMES));
             resp.put("native_resolution", NATIVE_RESOLUTION);
             resp.put("scale", WorldScaleManager.getCurrentScale());
@@ -133,10 +140,13 @@ public final class ExplorerServer {
             @SuppressWarnings("unchecked")
             Map<String, Object> data = GSON.fromJson(body, Map.class);
             if (!data.containsKey("seed")) { sendError(ex, 400, "seed required"); return; }
-            long newSeed = ((Number) data.get("seed")).longValue();
-            LocalTerrainProvider.changeSeedFromExplorer(newSeed);
+            Object raw = data.get("seed");
+            long newSeed = raw instanceof String s
+                    ? new BigInteger(s.trim()).longValue()
+                    : ((Number) raw).longValue();
+            LocalTerrainProvider.setExplorerSeed(newSeed);
             Map<String, Object> resp = new LinkedHashMap<>();
-            resp.put("seed", Long.toUnsignedString(LocalTerrainProvider.getSeed()));
+            resp.put("seed", Long.toUnsignedString(LocalTerrainProvider.explorerSeed()));
             sendJson(ex, 200, resp);
         } catch (Exception e) {
             sendError(ex, 400, e.getMessage());
@@ -147,7 +157,7 @@ public final class ExplorerServer {
     private static void handleNewSeed(HttpExchange ex) throws IOException {
         if (!ex.getRequestMethod().equalsIgnoreCase("POST")) { send405(ex); return; }
         try {
-            long newSeed = LocalTerrainProvider.generateRandomSeedFromExplorer();
+            long newSeed = LocalTerrainProvider.randomExplorerSeed();
             Map<String, Object> resp = new LinkedHashMap<>();
             resp.put("seed", Long.toUnsignedString(newSeed));
             sendJson(ex, 200, resp);
@@ -290,12 +300,21 @@ public final class ExplorerServer {
             int centerI = ci * 256 + panI;
             int centerJ = cj * 256 + panJ;
             int half    = detailSize / 2;
+            LocalTerrainProvider.markExplorerView(viewKey(q));
 
-            float[][] out = LocalTerrainProvider.getPipelineDataWithWater(
-                    centerI - half, centerJ - half, centerI + half, centerJ + half);
+            if (mode.equals("biomes")) {
+                BiomeView.Result biomes = biomeResult(q);
+                byte[] png = toPng(biomes.rgba(), biomes.h(), biomes.w());
+                ex.getResponseHeaders().set("Content-Type", "image/png");
+                ex.sendResponseHeaders(200, png.length);
+                ex.getResponseBody().write(png);
+                return;
+            }
+
+            float[][] out = LocalTerrainProvider.explorerData(
+                    centerI - half, centerJ - half, centerI + half, centerJ + half, mode.equals("temperature"));
             float[] elevFlat  = out[0];
             float[] climate   = out[1];
-            float[] waterFlat = out[2];
             int H = detailSize, W = detailSize;
 
             float[][] rgba;
@@ -303,7 +322,6 @@ public final class ExplorerServer {
                 float vmin = nanMin(elevFlat), vmax = nanMax(elevFlat);
                 if (vmax == vmin) vmax = vmin + 1f;
                 rgba = applyColormap1D(elevFlat, H, W, vmin, vmax, "terrain");
-                overlayWater(rgba, elevFlat, waterFlat, H, W);
             } else if (mode.equals("temperature") && climate != null) {
                 // climate[0] = temperature channel (H*W floats)
                 float[] temp = Arrays.copyOfRange(climate, 0, H * W);
@@ -320,7 +338,6 @@ public final class ExplorerServer {
                     rgba[2][i] = reliefRgb[2][i];
                     rgba[3][i] = 1f;
                 }
-                overlayWater(rgba, elevFlat, waterFlat, H, W);
             }
 
             byte[] png = toPng(rgba, H, W);
@@ -332,6 +349,66 @@ public final class ExplorerServer {
             sendError(ex, 400, e.getMessage());
         } finally {
             ex.close();
+        }
+    }
+
+    // GET /api/detail_water.png — transparent water layer for a detail view; 204 if the view changed first
+    private static void handleDetailWater(HttpExchange ex) throws IOException {
+        if (!ex.getRequestMethod().equalsIgnoreCase("GET")) { send405(ex); return; }
+        try {
+            Map<String, String> q = parseQuery(ex.getRequestURI());
+            int detailSize = getInt(q, "detail_size", 1024);
+            int centerI = getInt(q, "ci", 0) * 256 + getInt(q, "pan_i", 0);
+            int centerJ = getInt(q, "cj", 0) * 256 + getInt(q, "pan_j", 0);
+            int half = detailSize / 2;
+
+            float[][] out = LocalTerrainProvider.explorerWater(
+                    centerI - half, centerJ - half, centerI + half, centerJ + half, viewKey(q));
+            if (out == null) {
+                ex.sendResponseHeaders(204, -1);
+                return;
+            }
+            byte[] png = toPng(waterLayer(out[0], out[1], detailSize, detailSize), detailSize, detailSize);
+            ex.getResponseHeaders().set("Content-Type", "image/png");
+            ex.sendResponseHeaders(200, png.length);
+            ex.getResponseBody().write(png);
+        } catch (Exception e) {
+            LOG.error("detail_water.png error", e);
+            sendError(ex, 400, e.getMessage());
+        } finally {
+            ex.close();
+        }
+    }
+
+    // Identifies a detail view by its area, seed and scale, independent of display mode
+    private static String viewKey(Map<String, String> q) {
+        int detailSize = getInt(q, "detail_size", 1024);
+        int i0 = getInt(q, "ci", 0) * 256 + getInt(q, "pan_i", 0) - detailSize / 2;
+        int j0 = getInt(q, "cj", 0) * 256 + getInt(q, "pan_j", 0) - detailSize / 2;
+        return i0 + ":" + j0 + ":" + detailSize + ":" + LocalTerrainProvider.explorerSeed() + ":"
+                + WorldScaleManager.getCurrentScale();
+    }
+
+    private static BiomeView.Result biomeResult(Map<String, String> q) throws Exception {
+        int ci = getInt(q, "ci", 0);
+        int cj = getInt(q, "cj", 0);
+        int detailSize = getInt(q, "detail_size", 1024);
+        int panI = getInt(q, "pan_i", 0);
+        int panJ = getInt(q, "pan_j", 0);
+        int i0 = ci * 256 + panI - detailSize / 2;
+        int j0 = cj * 256 + panJ - detailSize / 2;
+        String key = i0 + ":" + j0 + ":" + detailSize + ":" + LocalTerrainProvider.explorerSeed() + ":"
+                + WorldScaleManager.getCurrentScale() + ":" + TerralithCompat.isActive();
+        return BiomeView.get(key, i0, j0, detailSize, detailSize);
+    }
+
+    private static void handleDetailBiomes(HttpExchange ex) throws IOException {
+        if (!ex.getRequestMethod().equalsIgnoreCase("GET")) { send405(ex); return; }
+        try {
+            sendJson(ex, 200, BiomeView.summary(biomeResult(parseQuery(ex.getRequestURI()))));
+        } catch (Exception e) {
+            LOG.error("detail_biomes error", e);
+            sendError(ex, 400, e.getMessage());
         }
     }
 
@@ -351,7 +428,7 @@ public final class ExplorerServer {
             int half    = detailSize / 2;
             int H = detailSize, W = detailSize;
 
-            float[][] out = LocalTerrainProvider.getPipelineData(
+            float[][] out = LocalTerrainProvider.explorerData(
                     centerI - half, centerJ - half, centerI + half, centerJ + half, true);
             float[] elevFlat = out[0];
             float[] climate  = out[1];
@@ -394,7 +471,7 @@ public final class ExplorerServer {
 
     // Return the given channel of the coarse map in real units
     private static float[] coarseChannel(int ci0, int ci1, int cj0, int cj1, int channel) throws Exception {
-        FloatTensor slice = LocalTerrainProvider.getPipelineCoarse(ci0, cj0, ci1, cj1);
+        FloatTensor slice = LocalTerrainProvider.explorerCoarse(ci0, cj0, ci1, cj1);
         int H = ci1 - ci0, W = cj1 - cj0;
         float[] result = new float[H * W];
         for (int i = 0; i < H * W; i++) {
@@ -425,20 +502,21 @@ public final class ExplorerServer {
         return baos.toByteArray();
     }
 
-    private static void overlayWater(float[][] rgba, float[] elev, float[] water, int H, int W) {
-        if (water == null) return;
+    // Water coloured by depth over a clear background
+    private static float[][] waterLayer(float[] bed, float[] water, int H, int W) {
+        float[][] rgba = new float[4][H * W];
         for (int i = 0; i < H * W; i++) {
             float surface = water[i];
             if (surface <= WaterNetwork.NO_WATER) continue;
-            float depth = surface - elev[i];
+            float depth = surface - bed[i];
             if (depth <= 0f) continue;
             float t = clamp01(depth / 120f);
-            float r = 0.13f - 0.07f * t, g = 0.40f - 0.20f * t, b = 0.76f - 0.20f * t;
-            float alpha = 0.80f + 0.20f * clamp01(depth / 40f);
-            rgba[0][i] = rgba[0][i] * (1f - alpha) + r * alpha;
-            rgba[1][i] = rgba[1][i] * (1f - alpha) + g * alpha;
-            rgba[2][i] = rgba[2][i] * (1f - alpha) + b * alpha;
+            rgba[0][i] = 0.13f - 0.07f * t;
+            rgba[1][i] = 0.40f - 0.20f * t;
+            rgba[2][i] = 0.76f - 0.20f * t;
+            rgba[3][i] = 0.80f + 0.20f * clamp01(depth / 40f);
         }
+        return rgba;
     }
 
     private static float[][] applyColormap1D(float[] data, int H, int W, float vmin, float vmax, String cmap) {

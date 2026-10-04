@@ -30,6 +30,7 @@ public final class DiskTileCache implements AutoCloseable {
 
     private final Path root;
     private final String fingerprint;
+    private final boolean readOnly;
     private final AtomicLong bytesOnDisk = new AtomicLong();
     private final AtomicLong windowsOnDisk = new AtomicLong();
     private final BlockingQueue<Runnable> writes = new ArrayBlockingQueue<>(WRITE_QUEUE_DEPTH);
@@ -41,13 +42,33 @@ public final class DiskTileCache implements AutoCloseable {
     private final AtomicLong misses = new AtomicLong();
     private final AtomicLong dropped = new AtomicLong();
 
-    private DiskTileCache(Path root, String fingerprint) {
+    private DiskTileCache(Path root, String fingerprint, boolean readOnly) {
         this.root = root;
         this.fingerprint = fingerprint;
+        this.readOnly = readOnly;
+        if (readOnly) {
+            this.writer = null;
+            return;
+        }
         this.writer = new Thread(this::drain, "terrain-diffusion-cache-writer");
         this.writer.setDaemon(true);
         this.writer.setPriority(Thread.MIN_PRIORITY);
         this.writer.start();
+    }
+
+    // Opens an existing cache for reading; returns null if there is none for this fingerprint
+    public static DiskTileCache openReadOnly(Path root, String fingerprint) {
+        try {
+            Path manifest = root.resolve(MANIFEST);
+            if (!Files.isRegularFile(manifest)
+                    || !fingerprint.equals(Files.readString(manifest, StandardCharsets.UTF_8).trim())) {
+                return null;
+            }
+            LOG.info("Terrain cache opened read-only at {}", root);
+            return new DiskTileCache(root, fingerprint, true);
+        } catch (IOException | RuntimeException e) {
+            return null;
+        }
     }
 
     // Opens the cache for fingerprint, discarding anything written under a different one
@@ -62,7 +83,7 @@ public final class DiskTileCache implements AutoCloseable {
                 LOG.info("Terrain cache fingerprint changed, discarding {}", root);
                 deleteTree(root);
             }
-            DiskTileCache cache = new DiskTileCache(root, fingerprint);
+            DiskTileCache cache = new DiskTileCache(root, fingerprint, false);
             if (usable) {
                 cache.manifestWritten = true;
                 long[] found = cache.measure();
@@ -91,7 +112,9 @@ public final class DiskTileCache implements AutoCloseable {
             byte[] raw = Files.readAllBytes(file);
             FloatTensor tensor = decode(raw);
             if (tensor == null) {
-                Files.deleteIfExists(file);
+                if (!readOnly) {
+                    Files.deleteIfExists(file);
+                }
                 misses.incrementAndGet();
                 return null;
             }
@@ -104,7 +127,7 @@ public final class DiskTileCache implements AutoCloseable {
     }
 
     public void store(String stageId, int[] windowIndex, FloatTensor tensor) {
-        if (!healthy || closed) {
+        if (readOnly || !healthy || closed) {
             return;
         }
         byte[] payload;
@@ -290,6 +313,12 @@ public final class DiskTileCache implements AutoCloseable {
     @Override
     public void close() {
         closed = true;
+        if (readOnly) {
+            if (hits.get() + misses.get() > 0) {
+                LOG.info("Terrain cache (read-only): {} hits, {} misses", hits.get(), misses.get());
+            }
+            return;
+        }
         writer.interrupt();
         if (hits.get() + misses.get() + dropped.get() > 0 || bytesOnDisk.get() > 0) {
             LOG.info("Terrain cache: {} hits, {} misses, {} dropped, {} windows / {} MB on disk",

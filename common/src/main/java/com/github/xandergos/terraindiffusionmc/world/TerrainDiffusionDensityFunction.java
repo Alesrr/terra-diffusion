@@ -73,6 +73,24 @@ public class TerrainDiffusionDensityFunction implements DensityFunction {
         return lowest;
     }
 
+    // nearestSurface for every column of a tile, computed once per tile
+    private static short[] sideSurface(HeightmapData data) {
+        short[] side = data.sideSurface;
+        if (side != null) {
+            return side;
+        }
+        int w = data.width, h = data.height;
+        side = new short[w * h];
+        for (int lz = 0; lz < h; lz++) {
+            for (int lx = 0; lx < w; lx++) {
+                int here = HeightConverter.convertToMinecraftHeight(data.heightmap[lz][lx]);
+                side[lz * w + lx] = (short) nearestSurface(data, lx, lz, here);
+            }
+        }
+        data.sideSurface = side;
+        return side;
+    }
+
     public static final TerrainDiffusionDensityFunction INSTANCE =
             new TerrainDiffusionDensityFunction(Boolean.TRUE);
 
@@ -119,7 +137,7 @@ public class TerrainDiffusionDensityFunction implements DensityFunction {
             return terrain;
         }
         return caves ? carve(data, x, y, z, terrain, targetHeight,
-                nearestSurface(data, localX, localZ, targetHeight) - y, localX, localZ) : terrain;
+                sideSurface(data)[localZ * data.width + localX] - y, localX, localZ) : terrain;
     }
 
     private static final class FillContext {
@@ -181,7 +199,7 @@ public class TerrainDiffusionDensityFunction implements DensityFunction {
             densities[i] = (!caves || terrain <= 0.0)
                     ? terrain
                     : carve(data, x, y, z, terrain, targetHeight,
-                            nearestSurface(data, localX, localZ, targetHeight) - y, localX, localZ);
+                            sideSurface(data)[localZ * data.width + localX] - y, localX, localZ);
         }
     }
 
@@ -194,7 +212,7 @@ public class TerrainDiffusionDensityFunction implements DensityFunction {
         boolean shallow = terrain < roof || sideDepth < roof;
         KarstNetwork karst = data.karst;
         if (karst != null && !karst.isEmpty() && !(shallow && underSea)) {
-            float cave = shallow ? karst.dolineDensity(x, y, z) : karst.density(x, y, z);
+            float cave = shallow ? karst.dolineDensity(x, y, z, (float) best) : karst.density(x, y, z, (float) best);
             if (cave < best) best = cave;
         }
         int deepClear = underSea ? Math.max(DEEP_CLEARANCE, SEA_FLOOR_ROOF) : DEEP_CLEARANCE;

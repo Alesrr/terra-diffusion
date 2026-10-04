@@ -9,6 +9,7 @@ import com.github.xandergos.terraindiffusionmc.world.TerrainDiffusionBiomeSource
 import com.github.xandergos.terraindiffusionmc.world.TerrainDiffusionDensityFunction;
 import com.github.xandergos.terraindiffusionmc.world.DeepOres;
 import com.github.xandergos.terraindiffusionmc.world.TfmgCompat;
+import com.github.xandergos.terraindiffusionmc.world.TerralithSnow;
 import com.github.xandergos.terraindiffusionmc.world.TerralithSurfaceRules;
 import com.github.xandergos.terraindiffusionmc.world.WorldScaleManager;
 import com.mojang.brigadier.CommandDispatcher;
@@ -75,6 +76,8 @@ public final class TerrainDiffusionLifecycle {
                 TfmgCompat.OIL_DEPOSIT);
         registrar.register(ResourceLocation.fromNamespaceAndPath(MOD_ID, "tfmg_oil_well"),
                 TfmgCompat.OIL_WELL);
+        registrar.register(ResourceLocation.fromNamespaceAndPath(MOD_ID, "scarlet_snow_gate"),
+                TerralithSnow.SCARLET_SNOW_GATE);
     }
 
     @FunctionalInterface
@@ -94,6 +97,7 @@ public final class TerrainDiffusionLifecycle {
             WorldPipeline.setCacheRoot(world.getServer().getWorldPath(LevelResource.ROOT));
             LocalTerrainProvider.init(world.getSeed());
             TerralithSurfaceRules.apply(world);
+            TerralithSnow.apply(world);
             DeepOres.apply(world);
             TfmgCompat.apply(world);
         }

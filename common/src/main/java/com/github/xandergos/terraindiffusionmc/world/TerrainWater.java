@@ -38,6 +38,63 @@ public final class TerrainWater {
 
     private static final ThreadLocal<TileRef> LAST = ThreadLocal.withInitial(TileRef::new);
 
+    private static final long BAND_UNKNOWN = Long.MAX_VALUE;
+
+    // Column facts are cached per thread over a 32x32 block neighbourhood, slotted by the low bits of x and z
+    private static final int SLOT_BITS = 5;
+    private static final int SLOT_MASK = (1 << SLOT_BITS) - 1;
+    private static final int SLOTS = 1 << (2 * SLOT_BITS);
+
+    private static int slotOf(int x, int z) {
+        return ((z & SLOT_MASK) << SLOT_BITS) | (x & SLOT_MASK);
+    }
+
+    private static final class Columns {
+        final int[] x = new int[SLOTS];
+        final int[] z = new int[SLOTS];
+        final int[] gen = new int[SLOTS];
+        final int[] ground = new int[SLOTS];
+        final long[] band = new long[SLOTS];
+        final byte[] bank = new byte[SLOTS];
+
+        Columns() {
+            java.util.Arrays.fill(gen, -1);
+        }
+    }
+
+    private static final ThreadLocal<Columns> COLUMNS = ThreadLocal.withInitial(Columns::new);
+
+    private static int slot(Columns c, int x, int z) {
+        int s = slotOf(x, z);
+        int g = LocalTerrainProvider.generation();
+        if (c.x[s] != x || c.z[s] != z || c.gen[s] != g) {
+            int ground = groundY(x, z);
+            c.ground[s] = ground;
+            c.band[s] = BAND_UNKNOWN;
+            c.bank[s] = 0;
+            c.x[s] = x;
+            c.z[s] = z;
+            c.gen[s] = g;
+        }
+        return s;
+    }
+
+    private static int cachedGround(int x, int z) {
+        Columns c = COLUMNS.get();
+        return c.ground[slot(c, x, z)];
+    }
+
+    private static long cachedBand(int x, int z) {
+        Columns c = COLUMNS.get();
+        int s = slot(c, x, z);
+        long band = c.band[s];
+        if (band == BAND_UNKNOWN) {
+            band = bandAt(x, z, c.ground[s]);
+            c.band[slot(c, x, z)] = band;
+        }
+        return band;
+    }
+
     private TerrainWater() {
     }
 
@@ -104,7 +161,7 @@ public final class TerrainWater {
     private static boolean openBlock(int x, int y, int z, int ground) {
         if (ground == NO_GROUND || y >= ground) return false;
         KarstNetwork net = karstNetwork(x, z);
-        if (!net.isEmpty() && net.density(x, y, z) < 0f) return true;
+        if (!net.isEmpty() && net.density(x, y, z, 0f) < 0f) return true;
         return y <= DeepCaverns.TOP && DeepCaverns.density(x, y, z) < 0f;
     }
 
@@ -117,8 +174,7 @@ public final class TerrainWater {
     }
 
     // Pool extent for a column, packed as (top << 32) | bottom, or #NO_BAND
-    private static long bandAt(int x, int z) {
-        int ground = groundY(x, z);
+    private static long bandAt(int x, int z, int ground) {
         if (ground == NO_GROUND) return NO_BAND;
         float table = karstWaterTableY(x, z);
         if (Float.isInfinite(table)) return NO_BAND;
@@ -126,7 +182,7 @@ public final class TerrainWater {
         if (levelY >= ground) levelY = ground - 1;
 
         KarstNetwork net = karstNetwork(x, z);
-        if (!net.isEmpty() && net.dolineDensity(x, levelY - 1, z) < 0f) return NO_BAND;
+        if (!net.isEmpty() && net.dolineDensity(x, levelY - 1, z, 0f) < 0f) return NO_BAND;
 
         int k = 1;
         while (k <= POOL_DEPTH + 1 && openBlock(x, levelY - k, z, ground)) k++;
@@ -141,14 +197,15 @@ public final class TerrainWater {
     // True where a pool column shows a horizontal face to open air, so the terrain puts stone there
     public static boolean rimSolid(int x, int y, int z) {
         if (!KARST_WATER) return false;
-        RimRef ref = RIM.get();
-        if (ref.x != x || ref.z != z) {
-            ref.x = x;
-            ref.z = z;
-            ref.band = bandAt(x, z);
-            ref.bank = ref.band != NO_BAND && bankColumn(x, z, ref.band);
+        long band = cachedBand(x, z);
+        if (!covers(band, y)) return false;
+        Columns c = COLUMNS.get();
+        byte bank = c.bank[slot(c, x, z)];
+        if (bank == 0) {
+            bank = bankColumn(x, z, band) ? (byte) 2 : (byte) 1;
+            c.bank[slot(c, x, z)] = bank;
         }
-        return ref.bank && covers(ref.band, y);
+        return bank == 2;
     }
 
     private static final int RIM_RADIUS =
@@ -163,8 +220,8 @@ public final class TerrainWater {
             for (int d = 0; d < 8; d++) {
                 int nx = x + RIM_DX[d] * r;
                 int nz = z + RIM_DZ[d] * r;
-                int ng = groundY(nx, nz);
-                long nb = bandAt(nx, nz);
+                int ng = cachedGround(nx, nz);
+                long nb = cachedBand(nx, nz);
                 for (int y = bottom; y < top; y++) {
                     if (!openBlock(nx, y, nz, ng)) continue;
                     if (!covers(nb, y)) return true;
@@ -174,15 +231,6 @@ public final class TerrainWater {
         return false;
     }
 
-    private static final class RimRef {
-        int x = Integer.MIN_VALUE;
-        int z = Integer.MIN_VALUE;
-        long band = NO_BAND;
-        boolean bank;
-    }
-
-    private static final ThreadLocal<RimRef> RIM = ThreadLocal.withInitial(RimRef::new);
-
     // True inside an underground river reach, at or below its water line
     public static boolean undergroundRiver(int x, int y, int z) {
         if (!KARST_WATER) return false;
@@ -190,7 +238,7 @@ public final class TerrainWater {
         if (net.isEmpty()) return false;
         float surface = net.riverWaterY(x, y, z);
         if (Float.isInfinite(surface) || y > Math.round(surface)) return false;
-        return net.riverDensity(x, y, z) < 0f;
+        return net.riverDensity(x, y, z, 0f) < 0f;
     }
 
     // A block with air on nearly every side is a perch
@@ -199,7 +247,7 @@ public final class TerrainWater {
         for (int d = 0; d < 4; d++) {
             int nx = x + (d == 0 ? 1 : d == 1 ? -1 : 0);
             int nz = z + (d == 2 ? 1 : d == 3 ? -1 : 0);
-            int ground = groundY(nx, nz);
+            int ground = cachedGround(nx, nz);
             if (!openBlock(nx, y, nz, ground)) continue;
             if (wetNear(nx, y, nz)) continue;
             air++;
@@ -214,23 +262,30 @@ public final class TerrainWater {
         Aquifer.FluidStatus stream = new Aquifer.FluidStatus(Integer.MAX_VALUE / 2, fluid);
         Aquifer.FluidStatus lava =
                 new Aquifer.FluidStatus(Integer.MAX_VALUE / 2, Blocks.LAVA.defaultBlockState());
-        ThreadLocal<ColumnRef> columns = ThreadLocal.withInitial(ColumnRef::new);
+        ThreadLocal<PickerColumns> columns = ThreadLocal.withInitial(PickerColumns::new);
 
         return (x, y, z) -> {
-            ColumnRef ref = columns.get();
-            if (ref.x != x || ref.z != z || ref.status == null) {
-                ref.x = x;
-                ref.z = z;
-                ref.ground = DRY_CAVES ? groundY(x, z) : NO_GROUND;
+            PickerColumns p = columns.get();
+            int s = slotOf(x, z);
+            int g = LocalTerrainProvider.generation();
+            if (p.x[s] != x || p.z[s] != z || p.gen[s] != g) {
+                int ground = DRY_CAVES ? cachedGround(x, z) : NO_GROUND;
                 int level = waterLevelY(x, z);
-                ref.status = level == NO_WATER
+                long band = KARST_WATER && ground != NO_GROUND ? cachedBand(x, z) : NO_BAND;
+                p.ground[s] = ground;
+                p.status[s] = level == NO_WATER
                         ? ocean
                         : new Aquifer.FluidStatus(level, fluid);
-                computeStream(ref, x, z);
+                p.streamTop[s] = (int) (band >> 32);
+                p.streamBottom[s] = (int) band;
+                p.x[s] = x;
+                p.z[s] = z;
+                p.gen[s] = g;
             }
 
-            if (ref.ground == NO_GROUND || y >= ref.ground) {
-                return ref.status;
+            int ground = p.ground[s];
+            if (ground == NO_GROUND || y >= ground) {
+                return p.status[s];
             }
             if (y <= DeepCaverns.LAVA_Y) {
                 return lava;
@@ -241,7 +296,7 @@ public final class TerrainWater {
             if (undergroundRiver(x, y, z)) {
                 return stream;
             }
-            boolean wet = (y >= ref.streamBottom && y < ref.streamTop)
+            boolean wet = (y >= p.streamBottom[s] && y < p.streamTop[s])
                     || (y <= DeepCaverns.TOP && DeepCaverns.fluid(x, y, z) == DeepCaverns.WATER);
             if (!wet || perched(x, y, z)) {
                 return dry;
@@ -250,18 +305,17 @@ public final class TerrainWater {
         };
     }
 
-    private static void computeStream(ColumnRef ref, int x, int z) {
-        long band = KARST_WATER && ref.ground != NO_GROUND ? bandAt(x, z) : NO_BAND;
-        ref.streamTop = (int) (band >> 32);
-        ref.streamBottom = (int) band;
-    }
+    private static final class PickerColumns {
+        final int[] x = new int[SLOTS];
+        final int[] z = new int[SLOTS];
+        final int[] gen = new int[SLOTS];
+        final int[] ground = new int[SLOTS];
+        final int[] streamTop = new int[SLOTS];
+        final int[] streamBottom = new int[SLOTS];
+        final Aquifer.FluidStatus[] status = new Aquifer.FluidStatus[SLOTS];
 
-    private static final class ColumnRef {
-        int x = Integer.MIN_VALUE;
-        int z = Integer.MIN_VALUE;
-        int ground = NO_GROUND;
-        int streamTop = Integer.MIN_VALUE;
-        int streamBottom = Integer.MAX_VALUE;
-        Aquifer.FluidStatus status;
+        PickerColumns() {
+            java.util.Arrays.fill(gen, -1);
+        }
     }
 }

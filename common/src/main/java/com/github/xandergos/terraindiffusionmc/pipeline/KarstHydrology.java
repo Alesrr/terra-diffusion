@@ -462,6 +462,26 @@ public final class KarstHydrology {
 
         final float hStepBlocks = hs * blocksPerCell;
 
+        // Fracture direction per column and horizontal step, shared by every level
+        float[] fracCos = null, fracSin = null;
+        if (FRACTURE_W > 0f) {
+            fracCos = new float[nxz * nxz * 9];
+            fracSin = new float[nxz * nxz * 9];
+            for (int col = 0; col < nxz * nxz; col++) {
+                int cu = col / nxz, cv = col % nxz;
+                for (int h = 0; h < 9; h++) {
+                    int nu = cu + h / 3 - 1, nv = cv + h % 3 - 1;
+                    if (nu < 0 || nv < 0 || nu >= nxz || nv >= nxz) continue;
+                    int ncol = nu * nxz + nv;
+                    float midX = 0.5f * (colPosX[col] + colPosX[ncol]);
+                    float midZ = 0.5f * (colPosZ[col] + colPosZ[ncol]);
+                    float ang = FRACTURE_ANGLE.GetNoise(midX, midZ) * (float) Math.PI;
+                    fracCos[col * 9 + h] = (float) Math.cos(ang);
+                    fracSin[col * 9 + h] = (float) Math.sin(ang);
+                }
+            }
+        }
+
         while (!heap.isEmpty()) {
             long top = heap.pop();
             int n = (int) (top & 0xFFFFFFFFL);
@@ -510,9 +530,8 @@ public final class KarstHydrology {
                 }
 
                 if (FRACTURE_W > 0f) {
-                    float midX = 0.5f * (x0 + x1), midZ = 0.5f * (z0 + z1);
-                    float ang = FRACTURE_ANGLE.GetNoise(midX, midZ) * (float) Math.PI;
-                    float ca = (float) Math.cos(ang), sa = (float) Math.sin(ang);
+                    int h = col * 9 + (dU[e] + 1) * 3 + (dV[e] + 1);
+                    float ca = fracCos[h], sa = fracSin[h];
                     float hx = ex / len, hz = ez / len;
                     float a1 = Math.abs(hx * ca + hz * sa);
                     float a2 = Math.abs(-hx * sa + hz * ca);

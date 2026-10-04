@@ -126,3 +126,6 @@ bin/
 libs/
 # local working notes
 project_notes.md
+
+# Collected release artifacts
+releases/

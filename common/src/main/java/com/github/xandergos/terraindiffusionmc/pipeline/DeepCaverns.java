@@ -88,7 +88,10 @@ public final class DeepCaverns {
     private static FastNoiseLite chimB;
     private static volatile int GEN;
 
-    private static final ThreadLocal<Col> COL = ThreadLocal.withInitial(Col::new);
+    // Per-thread columns over a 32x32 block neighbourhood, slotted by the low bits of x and z
+    private static final int COL_BITS = 5;
+    private static final int COL_MASK = (1 << COL_BITS) - 1;
+    private static final ThreadLocal<Col[]> COLS = ThreadLocal.withInitial(() -> new Col[1 << (2 * COL_BITS)]);
 
     static {
         setSeed(0L);
@@ -137,7 +140,13 @@ public final class DeepCaverns {
     }
 
     private static Col column(int x, int z) {
-        Col c = COL.get();
+        Col[] cols = COLS.get();
+        int slot = ((z & COL_MASK) << COL_BITS) | (x & COL_MASK);
+        Col c = cols[slot];
+        if (c == null) {
+            c = new Col();
+            cols[slot] = c;
+        }
         if (c.x == x && c.z == z && c.gen == GEN) return c;
         c.gen = GEN;
         c.x = x;

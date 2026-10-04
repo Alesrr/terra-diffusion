@@ -11,6 +11,8 @@ public final class TerrainSample {
 
     public float temp;
 
+    public float tReg, relElev, moist, frost;
+
     public float tStd;
 
     public float precip;
