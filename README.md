@@ -134,33 +134,6 @@ Saved with the world. It controls:
 (the model runs more often); higher values lean on the CPU (taller worlds). 
 *I don't suggest using scale 5-6 unless you have a 64core cpu or something!*
 
-### Village spacing and world scale
-
-New Terrain Diffusion worlds multiply village spacing and separation by the saved world
-scale. Scale 1 retains the original placement; larger scales preserve approximately the
-same number of candidate opportunities per enlarged terrain region. Village buildings
-keep their normal size. Final counts still depend on biomes, terrain and layout checks.
-
-![Accepted village starts before and after scaling, at world scales 1–6](docs/village-spacing-by-scale.png)
-
-Same seed and corresponding land-focused terrain region at every scale. Markers show
-accepted native village starts after biome, terrain, exclusion and jigsaw checks, rather
-than candidate grid points. The backdrop uses coarse terrain sampling.
-
-`structures.scale_spacing=auto` (default) enables scaling for new worlds and preserves
-existing worlds' saved policy. Older worlds retain their fixed grid. Explicit `true` or
-`false` adopts and saves that policy; returning to `auto` retains the choice. Restart after
-changes. Back up before switching an established world: only future starts change, mixed
-frontiers can have irregular spacing, and locate follows the active grid.
-
-The `terrain-diffusion-mc:scale_with_terrain` structure-set tag includes `minecraft:villages`
-and optional `terralith:rare_village`. Datapacks can extend or replace it. Original datapack
-spacing is the baseline, including manual overrides. Only vanilla random-spread placements
-are scaled; grids cap at 4,096 chunks while preserving the separation ratio. Salt, frequency,
-spread type, locate offset, weights and exclusion radii stay unchanged. Generation, locate
-and exclusion queries share the adjusted grid without changing shared registry definitions.
-Other generators and dimensions retain their behavior.
-
 ## Common issues
 
 **A dynamic link library (DLL) initialization routine failed**
