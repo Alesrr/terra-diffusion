@@ -136,48 +136,30 @@ Saved with the world. It controls:
 
 ### Village spacing and world scale
 
-Terrain scale enlarges horizontal terrain and biome regions. A fixed village grid therefore
-puts approximately `scale²` as many village candidates in the corresponding terrain region.
-New worlds multiply the original datapack spacing and separation by the saved world
-scale, once per generator at world load. `structures.scale_spacing=auto` (the default)
-preserves the world's saved policy; saves from before this feature keep their fixed grid.
-Scale 1 preserves the original placement exactly. Vanilla's village grid is:
+New Terrain Diffusion worlds multiply village spacing and separation by the saved world
+scale. Scale 1 retains the original placement; larger scales preserve approximately the
+same number of candidate opportunities per enlarged terrain region. Village buildings
+keep their normal size. Final counts still depend on biomes, terrain and layout checks.
 
-| World scale | Spacing (chunks / blocks) | Separation (chunks) | Candidate density per block area |
-| --- | --- | --- | --- |
-| 1 | 34 / 544 | 8 | 1 |
-| 2 | 68 / 1,088 | 16 | 1/4 |
-| 4 | 136 / 2,176 | 32 | 1/16 |
-| 6 | 204 / 3,264 | 48 | 1/36 |
+![Accepted village starts before and after scaling, at world scales 1–6](docs/village-spacing-by-scale.png)
 
-Spacing is the candidate-cell width, not a guaranteed distance between village centers.
-This preserves candidate opportunities per terrain region, not exact final vanilla village
-counts: biome coverage, terrain rejection and Terralith's additional villages still matter.
-Village buildings and footprints retain their normal size. Salt, frequency, spread type,
-locate offset, structure weights and exclusion radii retain their datapack values.
-Generation, locate searches and exclusion-zone queries use the same scaled grid.
+Same seed and corresponding land-focused terrain region at every scale. Markers show
+accepted native village starts after biome, terrain, exclusion and jigsaw checks, rather
+than candidate grid points. The backdrop uses coarse terrain sampling.
 
-The `terrain-diffusion-mc:scale_with_terrain` **structure-set tag** selects the affected sets.
-It includes `minecraft:villages` and optionally `terralith:rare_village`. A datapack can
-extend the tag for other structures, or replace it with an empty list to opt out. Only
-vanilla random-spread placements are scaled; custom placement classes and concentric-ring
-strongholds retain their own algorithms. Other generators and dimensions are unchanged.
-Datapack placement values are respected as the baseline, so an existing manual spacing
-increase would also be multiplied. Unusually large grids cap at the codec's 4,096 chunks
-while preserving the separation ratio.
+`structures.scale_spacing=auto` (default) enables scaling for new worlds and preserves
+existing worlds' saved policy. Older worlds retain their fixed grid. Explicit `true` or
+`false` adopts and saves that policy; returning to `auto` retains the choice. Restart after
+changes. Back up before switching an established world: only future starts change, mixed
+frontiers can have irregular spacing, and locate follows the active grid.
 
-**Existing worlds:** `auto` preserves the fixed grid, including worlds that predate the
-scale-settings record. Set `structures.scale_spacing=true` to adopt scaling explicitly,
-or `false` to adopt the fixed grid. Overrides are saved with each loaded Terrain Diffusion
-world, so returning to `auto` retains that choice. Back up before switching an established
-world. Enabling scaling, changing the scale or changing the tag affects future starts in
-unexplored chunks; it does not remove or relocate saved villages.
-Mixed old/new frontiers can have irregular spacing, and locate searches follow the active
-policy rather than promising to discover every legacy-grid start. Server configuration
-is read at startup; generation-policy or scale changes require a world restart. No
-automatic world reset or village deletion is performed.
-
-[Focused placement checks and integration test instructions](tools/structure-tests/README.md).
+The `terrain-diffusion-mc:scale_with_terrain` structure-set tag includes `minecraft:villages`
+and optional `terralith:rare_village`. Datapacks can extend or replace it. Original datapack
+spacing is the baseline, including manual overrides. Only vanilla random-spread placements
+are scaled; grids cap at 4,096 chunks while preserving the separation ratio. Salt, frequency,
+spread type, locate offset, weights and exclusion radii stay unchanged. Generation, locate
+and exclusion queries share the adjusted grid without changing shared registry definitions.
+Other generators and dimensions retain their behavior.
 
 ## Common issues
 
