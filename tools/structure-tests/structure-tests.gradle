@@ -1,0 +1,16 @@
+// Explicit opt-in only: this instrumentation never enters distribution JARs.
+gradle.projectsEvaluated {
+    if (gradle.rootProject.findProject(':neoforge') == null) return
+    gradle.rootProject.project(':neoforge') {
+        sourceSets.main.java.srcDir rootProject.file('tools/structure-tests/java')
+        neoForge.runs.server {
+            gameDirectory = rootProject.file(findProperty('structureTestDir'))
+            programArguments.add '--nogui'
+            systemProperty 'terradiff.structureTest', 'true'
+            systemProperty 'terradiff.structureTest.scale', findProperty('structureTestScale') ?: '4'
+            systemProperty 'terradiff.structureTest.enabled', findProperty('structureTestEnabled') ?: 'true'
+            systemProperty 'terradiff.structureTest.maps', findProperty('structureTestMaps') ?: 'false'
+            jvmArguments.addAll '-Xms512M', '-Xmx10G'
+        }
+    }
+}

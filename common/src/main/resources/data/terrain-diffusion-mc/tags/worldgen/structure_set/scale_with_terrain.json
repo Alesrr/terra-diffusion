@@ -1,0 +1,7 @@
+{
+  "replace": false,
+  "values": [
+    "minecraft:villages",
+    { "id": "terralith:rare_village", "required": false }
+  ]
+}

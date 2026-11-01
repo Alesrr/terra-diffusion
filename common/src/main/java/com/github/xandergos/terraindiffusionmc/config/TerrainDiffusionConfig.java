@@ -77,6 +77,10 @@ public final class TerrainDiffusionConfig {
         return readBoolean("terralith.enabled", true);
     }
 
+    public static boolean scaleStructureSpacing() {
+        return readBoolean("structures.scale_spacing", true);
+    }
+
     public static boolean terralithInjectSurfaceRules() {
         return readBoolean("terralith.inject_surface_rules", true);
     }

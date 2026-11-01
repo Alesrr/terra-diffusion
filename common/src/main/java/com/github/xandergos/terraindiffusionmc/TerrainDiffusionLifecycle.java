@@ -12,6 +12,8 @@ import com.github.xandergos.terraindiffusionmc.world.TfmgCompat;
 import com.github.xandergos.terraindiffusionmc.world.TerralithSnow;
 import com.github.xandergos.terraindiffusionmc.world.TerralithSurfaceRules;
 import com.github.xandergos.terraindiffusionmc.world.WorldScaleManager;
+import com.github.xandergos.terraindiffusionmc.world.ScaleAwareStructureState;
+import com.github.xandergos.terraindiffusionmc.config.TerrainDiffusionConfig;
 import com.mojang.brigadier.CommandDispatcher;
 import com.mojang.brigadier.context.CommandContext;
 import net.minecraft.commands.CommandSourceStack;
@@ -94,6 +96,12 @@ public final class TerrainDiffusionLifecycle {
     public static void onWorldLoad(ServerLevel world) {
         if (world.dimension() == Level.OVERWORLD) {
             WorldScaleManager.initializeForWorld(world);
+            if (world.getChunkSource().getGenerator().getBiomeSource() instanceof TerrainDiffusionBiomeSource
+                    && TerrainDiffusionConfig.scaleStructureSpacing()) {
+                ((ScaleAwareStructureState) world.getChunkSource().getGeneratorState())
+                        .terrainDiffusion$configureStructureScale(WorldScaleManager.getCurrentScale(),
+                                world.registryAccess());
+            }
             WorldPipeline.setCacheRoot(world.getServer().getWorldPath(LevelResource.ROOT));
             LocalTerrainProvider.init(world.getSeed());
             TerralithSurfaceRules.apply(world);
