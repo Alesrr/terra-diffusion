@@ -1,4 +1,4 @@
-"""Render matched maps from native candidate exports and the existing seed-atlas web renderer."""
+"""Render matched native village-start or candidate maps with the existing web-map backdrop."""
 import argparse
 import hashlib
 import importlib.util
@@ -30,17 +30,19 @@ def terrain(background, coarse, native_cell, row, width):
     full_extent = (coarse['cj1'] - coarse['cj0']) * native_cell
     native_extent = row['extentBlocks'] / row['scale']
     half = background.width * native_extent / full_extent / 2
-    center = background.width / 2
-    return background.crop((center-half, center-half, center+half, center+half)).resize(
+    center_x = (row.get('centerX', 0)/row['scale']/native_cell - coarse['cj0']) / (coarse['cj1']-coarse['cj0']) * background.width
+    center_z = (row.get('centerZ', 0)/row['scale']/native_cell - coarse['ci0']) / (coarse['ci1']-coarse['ci0']) * background.height
+    return background.crop((center_x-half, center_z-half, center_x+half, center_z+half)).resize(
         (width, width), Image.Resampling.LANCZOS).convert('RGB')
 
 
-def map_image(base, points, extent, radius):
+def map_image(base, points, extent, radius, center_x=0, center_z=0):
     result = base.copy()
     draw = ImageDraw.Draw(result)
     width = base.width
-    for x, z, kind in points:
-        px, py = (x / extent + .5) * width, (z / extent + .5) * width
+    for point in points:
+        x, z, kind = point[:3]
+        px, py = ((x-center_x) / extent + .5) * width, ((z-center_z) / extent + .5) * width
         draw.ellipse((px-radius, py-radius, px+radius, py+radius), fill=COLORS[kind],
                      outline='#18231f', width=1)
     # Constant scale bar in world blocks, independently labeled for every scale.
@@ -56,9 +58,9 @@ def map_image(base, points, extent, radius):
     return result
 
 
-def counts(points):
+def counts(points, valid=False):
     ordinary = sum(point[2] == 0 for point in points)
-    return f'{len(points):,} candidates  ·  {ordinary:,} vanilla + {len(points)-ordinary:,} Terralith'
+    return f'{len(points):,} {"village starts" if valid else "candidates"}  ·  {ordinary:,} vanilla + {len(points)-ordinary:,} Terralith'
 
 
 def pair(background, data, row, map_width=780):
@@ -72,15 +74,20 @@ def pair(background, data, row, map_width=780):
     for column, mode in enumerate(('before', 'after')):
         left = margin + column * (map_width + gap)
         labels(result, (left, 108), 'BEFORE · fixed grid' if mode == 'before' else 'AFTER · spacing × world scale', 23, bold=True)
-        labels(result, (left, 144), counts(row[mode]), 19, MUTED)
-        result.paste(map_image(base, row[mode], row['extentBlocks'], 3.5), (left, 182))
+        labels(result, (left, 144), counts(row[mode], data.get('validStarts', False)), 19, MUTED)
+        result.paste(map_image(base, row[mode], row['extentBlocks'], 4.5 if data.get('validStarts') else 3.5,
+                               row.get('centerX', 0), row.get('centerZ', 0)), (left, 182))
     footer = map_width + 199
-    labels(result, (margin+18, footer), 'Vanilla village grid', 18)
-    labels(result, (margin+268, footer), 'Terralith rare-village grid', 18)
+    labels(result, (margin+18, footer), 'Vanilla villages' if data.get('validStarts') else 'Vanilla village grid', 18)
+    labels(result, (margin+268, footer), 'Terralith rare villages' if data.get('validStarts') else 'Terralith rare-village grid', 18)
     ImageDraw.Draw(result).ellipse((margin, footer+6, margin+9, footer+15), fill=COLORS[0])
     ImageDraw.Draw(result).ellipse((margin+250, footer+6, margin+259, footer+15), fill=COLORS[1])
-    labels(result, (margin, footer+32), 'CANDIDATES, NOT GENERATED VILLAGES · Native frequency/exclusion checks applied; biome and terrain checks not applied.', 17, MUTED)
-    labels(result, (margin, footer+57), 'Coarse-model terrain for context. Ocean candidates are shown and normally fail generation. Bounds are half-open; north is −Z.', 16, MUTED)
+    if data.get('validStarts'):
+        labels(result, (margin, footer+32), 'VALID VILLAGE STARTS · Native placement, exclusions, weighted selection, biome, terrain, complete jigsaw layout and fork veto checks passed.', 17, MUTED)
+        labels(result, (margin, footer+57), 'Land-focused region with matched bounds. Coarse terrain backdrop; markers are accepted layout centers. Building blocks have not been populated.', 16, MUTED)
+    else:
+        labels(result, (margin, footer+32), 'CANDIDATES, NOT GENERATED VILLAGES · Native frequency/exclusion checks applied; biome and terrain checks not applied.', 17, MUTED)
+        labels(result, (margin, footer+57), 'Coarse-model terrain for context. Ocean candidates are shown and normally fail generation. Bounds are half-open; north is −Z.', 16, MUTED)
     return result
 
 
@@ -88,8 +95,9 @@ def overview(background, data, framing):
     rows = [r for r in data['comparisons'] if r['framing'] == framing]
     card_width, map_width, card_height = 900, 420, 555
     result = Image.new('RGB', (2*card_width+60, 3*card_height+230), BACKGROUND)
-    labels(result, (30, 22), 'VILLAGE PLACEMENT  /  Six scales, same seed', 34, bold=True)
-    subtitle = 'Same terrain region enlarged with scale: old grids accumulate candidates; scaled grids retain regional opportunities.' if framing == 'regional' else 'Fixed 8,192 × 8,192-block area: candidate density falls as spacing grows with world scale.'
+    valid = data.get('validStarts', False)
+    labels(result, (30, 22), f'{"VALID VILLAGE STARTS" if valid else "VILLAGE PLACEMENT"}  /  Six scales, same seed', 34, bold=True)
+    subtitle = 'Land-focused region, enlarged with scale. Every marker passed the complete native village-start generation pipeline.' if valid else ('Same terrain region enlarged with scale: old grids accumulate candidates; scaled grids retain regional opportunities.' if framing == 'regional' else 'Fixed 8,192 × 8,192-block area: candidate density falls as spacing grows with world scale.')
     labels(result, (30, 76), subtitle, 20, MUTED)
     for index, row in enumerate(rows):
         left, top = 30 + index % 2 * card_width, 125 + index // 2 * card_height
@@ -99,14 +107,15 @@ def overview(background, data, framing):
         base = terrain(background, data['coarse'], data['nativeBlocksPerCoarseCell'], row, map_width)
         for column, mode in enumerate(('before', 'after')):
             x = left + 8 + column * (map_width+16)
-            labels(result, (x, top+49), f'{mode.upper()}   {len(row[mode]):,} candidates', 20)
-            result.paste(map_image(base, row[mode], row['extentBlocks'], 2.5), (x, top+83))
+            labels(result, (x, top+49), f'{mode.upper()}   {len(row[mode]):,} {"villages" if valid else "candidates"}', 20)
+            result.paste(map_image(base, row[mode], row['extentBlocks'], 3.5 if valid else 2.5,
+                                   row.get('centerX', 0), row.get('centerZ', 0)), (x, top+83))
         reduction = 100 * (1 - len(row['after']) / len(row['before'])) if row['before'] else 0
         labels(result, (left+8, top+512), f'{reduction:.1f}% fewer in this window  ·  grid-cell area × {row["scale"]**2}', 18, MUTED)
     bottom = 3*card_height + 125
-    labels(result, (30, bottom), 'Yellow: vanilla village candidates   /   Coral: Terralith rare-village candidates', 19)
-    labels(result, (30, bottom+30), 'Candidate grids before biome and terrain rejection; includes ocean positions. These are not confirmed generated villages.', 19, MUTED)
-    labels(result, (30, bottom+60), f'Native Minecraft placement + exclusion checks · seed {data["seed"]} · matching terrain and bounds within each before/after pair', 18, MUTED)
+    labels(result, (30, bottom), 'Yellow: vanilla villages   /   Coral: Terralith rare villages' if valid else 'Yellow: vanilla village candidates   /   Coral: Terralith rare-village candidates', 19)
+    labels(result, (30, bottom+30), 'Accepted native structure starts: biome, terrain, weighted selection, complete jigsaw layout, frequency/exclusion and fork checks passed.' if valid else 'Candidate grids before biome and terrain rejection; includes ocean positions. These are not confirmed generated villages.', 19, MUTED)
+    labels(result, (30, bottom+60), f'Seed {data["seed"]} · identical terrain and bounds per pair · coarse terrain backdrop · '+('building blocks not populated' if valid else 'native candidate placement'), 18, MUTED)
     return result
 
 
@@ -133,16 +142,22 @@ def main():
         pair(background, data, row).save(folder / f'scale-{row["scale"]}.png')
         summary.append({key: row[key] for key in ('scale', 'framing', 'extentBlocks')} | {
             'before': len(row['before']), 'after': len(row['after']),
-            'beforeByFamily': counts(row['before']), 'afterByFamily': counts(row['after'])})
+            'beforeByFamily': counts(row['before'], data.get('validStarts', False)), 'afterByFamily': counts(row['after'], data.get('validStarts', False))})
         if row['scale'] == 1:
             assert row['before'] == row['after'], 'Scale-1 parity must be exact'
-    for framing in ('regional', 'fixed-area'):
+    for framing in sorted({row['framing'] for row in data['comparisons']}):
         overview(background, data, framing).save(args.output / f'overview-{framing}.png')
     receipt = dict(seed=data['seed'], markerMeaning=data['markerMeaning'],
                    dataSha256=hashlib.sha256(args.data.read_bytes()).hexdigest(),
                    webRendererSha256=hashlib.sha256(args.map_renderer.read_bytes()).hexdigest(),
                    frequencyMultipliers=data['frequencyMultipliers'], comparisons=summary,
-                   limitations='Coarse terrain backdrop; no biome/slope/structure-start generation. Candidates include oceans.')
+                   limitations='Coarse terrain backdrop; building-block population not run.' if data.get('validStarts') else 'Coarse terrain backdrop; no biome/slope/structure-start generation. Candidates include oceans.')
+    if data.get('validStarts'):
+        receipt.update(inferenceBackend=data.get('inferenceBackend'),
+                       regionSelection=data.get('regionSelection'),
+                       coarseLandShare=data.get('coarseLandShare'),
+                       centerNativeX=data.get('centerNativeX'), centerNativeZ=data.get('centerNativeZ'),
+                       nativeExtentBlocks=data.get('nativeExtentBlocks'))
     (args.output / 'receipt.json').write_text(json.dumps(receipt, indent=2))
     print(json.dumps(summary, indent=2))
 

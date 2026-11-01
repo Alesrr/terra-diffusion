@@ -10,6 +10,12 @@ gradle.projectsEvaluated {
             systemProperty 'terradiff.structureTest.scale', findProperty('structureTestScale') ?: '4'
             systemProperty 'terradiff.structureTest.enabled', findProperty('structureTestEnabled') ?: 'true'
             systemProperty 'terradiff.structureTest.maps', findProperty('structureTestMaps') ?: 'false'
+            systemProperty 'terradiff.structureTest.validVillages', findProperty('structureTestValidVillages') ?: 'false'
+            systemProperty 'terradiff.structureTest.villageRegion', findProperty('structureTestVillageRegion') ?: ''
+            systemProperty 'terradiff.structureTest.coarseEnd', findProperty('structureTestCoarseEnd') ?: '16'
+            if (findProperty('structureTestDirectMLAgent')) {
+                jvmArguments.add '-javaagent:' + findProperty('structureTestDirectMLAgent')
+            }
             jvmArguments.addAll '-Xms512M', '-Xmx10G'
         }
     }

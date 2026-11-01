@@ -20,8 +20,8 @@ initialization and the configuration opt-out. Each process exits inside the worl
 event, before spawn generation, and writes `structure-checks.txt`. Checks cover real
 datapack tags, the production lifecycle, an already-initialized locate index, exclusion
 queries against the scaled grid, idempotence and unchanged shared registry definitions
-and other generators. Model files are required by ordinary mod startup; no terrain is
-generated. No existing world, client configuration or installed JAR is edited. Run a
+and other generators. Model files are required by ordinary mod startup; the default
+checks do not generate terrain. No existing world, client configuration or installed JAR is edited. Run a
 normal build without the init script afterward to produce distribution JARs.
 
 The checks establish candidate placement behavior. They do not establish exact vanilla
@@ -52,3 +52,29 @@ are explicitly **candidates before biome and terrain rejection**, not generated 
 This separates the grid policy's density effect from biome distribution and terrain
 suitability. Exact finite-window counts can differ from the inverse-square grid-cell rate
 because of boundaries and unchanged exclusion radii.
+
+### Valid village starts in a land-focused region
+
+Add `--valid-villages` to the fixture runner to generate the replacement, player-relevant
+comparison. It chooses a predominantly land, mild, low-elevation coarse-model window
+without consulting any village result, then keeps that same native terrain region across
+scales 1–6. This executes the real `ChunkGenerator.createStructures` path in detached
+`ProtoChunk`s: placement/frequency/exclusions, weighted structure selection and retries,
+biome validation, real terrain-height sampling, full jigsaw piece generation and the
+fork's unsupported-start veto. Only valid `StructureStart`s are exported. Markers use
+the accepted layout bounding-box center; the export retains the actual structure ID and
+piece count. No substitute biome classifier or approximate land-mask rejection is used.
+
+The result is `valid-village-data.json`; render it with the same `density_maps.py` command
+to a separate output directory. The overview and all six individual pairs show accepted
+village starts, not the earlier candidate grid. The backdrop is still coarse geography;
+building blocks and later decoration are not populated. No player save is used. Real
+terrain inference makes this slower than the candidate-only check. Each unique start is
+evaluated once across before/after, and checkpointed in the owned fixture directory.
+
+`--village-region centerX,centerZ,extent` selects an explicit native-coordinate window;
+record why it was selected and preserve it across the comparison. `--coarse-end` extends
+the backdrop when needed. The exporter rejects windows outside its backdrop or with
+less than 80% coarse land. `--backend windows` uses DirectML; an optional
+`--directml-agent` can preload an existing instance-local DLL. Both sides always use the
+same backend. The backend and region-selection method are recorded in the export.

@@ -28,7 +28,7 @@ final class DensityMapData {
         var gson = new GsonBuilder().setPrettyPrinting().create();
         output.add("frequencyMultipliers", gson.toJsonTree(WorldPipelineModelConfig.frequencyMultipliers()));
         JsonObject coarse = new JsonObject();
-        int start = -16, end = 16, size = end - start, pixels = size * size;
+        int start = -16, end = Integer.getInteger("terradiff.structureTest.coarseEnd", 16), size = end - start, pixels = size * size;
         coarse.addProperty("ci0", start); coarse.addProperty("ci1", end);
         coarse.addProperty("cj0", start); coarse.addProperty("cj1", end);
         var tensor = LocalTerrainProvider.explorerCoarse(start, start, end, end);

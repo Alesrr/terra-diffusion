@@ -23,7 +23,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
-/** Exits before spawn/chunk generation; requires an owned disposable server directory. */
+/** Exits before normal spawn generation; optional start checks use detached chunks. */
 @EventBusSubscriber(modid = "terra_diffusion_compat")
 public final class StructureChecks {
     @SubscribeEvent
@@ -40,6 +40,7 @@ public final class StructureChecks {
         try {
             run(level);
             if (Boolean.getBoolean("terradiff.structureTest.maps")) DensityMapData.export(level);
+            if (Boolean.getBoolean("terradiff.structureTest.validVillages")) ValidVillageMapData.export(level);
             Files.writeString(Path.of("structure-checks.txt"), "PASS: lifecycle, tags, native locate index, exclusion grid, registry isolation\n");
             System.out.println("STRUCTURE CHECKS PASSED");
             // No normal shutdown/save: the fixture deliberately stops inside world construction.
