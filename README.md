@@ -138,8 +138,9 @@ Saved with the world. It controls:
 
 Terrain scale enlarges horizontal terrain and biome regions. A fixed village grid therefore
 puts approximately `scale²` as many village candidates in the corresponding terrain region.
-With `structures.scale_spacing=true` (the default), the original datapack spacing and
-separation are multiplied by the saved world scale, once per generator at world load.
+New worlds multiply the original datapack spacing and separation by the saved world
+scale, once per generator at world load. `structures.scale_spacing=auto` (the default)
+preserves the world's saved policy; saves from before this feature keep their fixed grid.
 Scale 1 preserves the original placement exactly. Vanilla's village grid is:
 
 | World scale | Spacing (chunks / blocks) | Separation (chunks) | Candidate density per block area |
@@ -165,12 +166,16 @@ Datapack placement values are respected as the baseline, so an existing manual s
 increase would also be multiplied. Unusually large grids cap at the codec's 4,096 chunks
 while preserving the separation ratio.
 
-**Existing worlds:** back up first. Set `structures.scale_spacing=false` before upgrading
-to retain the old fixed-grid policy. Enabling it, changing the scale or changing the tag
-affects future starts in unexplored chunks; it does not remove or relocate saved villages.
+**Existing worlds:** `auto` preserves the fixed grid, including worlds that predate the
+scale-settings record. Set `structures.scale_spacing=true` to adopt scaling explicitly,
+or `false` to adopt the fixed grid. Overrides are saved with each loaded Terrain Diffusion
+world, so returning to `auto` retains that choice. Back up before switching an established
+world. Enabling scaling, changing the scale or changing the tag affects future starts in
+unexplored chunks; it does not remove or relocate saved villages.
 Mixed old/new frontiers can have irregular spacing, and locate searches follow the active
 policy rather than promising to discover every legacy-grid start. Server configuration
-is read at startup. No automatic world reset or village deletion is performed.
+is read at startup; generation-policy or scale changes require a world restart. No
+automatic world reset or village deletion is performed.
 
 [Focused placement checks and integration test instructions](tools/structure-tests/README.md).
 

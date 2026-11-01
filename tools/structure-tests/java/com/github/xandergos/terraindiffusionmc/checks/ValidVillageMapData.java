@@ -95,8 +95,6 @@ final class ValidVillageMapData {
         var generator = level.getChunkSource().getGenerator();
         var biomeRegistry = level.registryAccess().registryOrThrow(Registries.BIOME);
         int previousScale = WorldScaleManager.getCurrentScale();
-        var checkpoint = Path.of("valid-village-progress.json");
-        var completed = Files.exists(checkpoint) ? JsonParser.parseString(Files.readString(checkpoint)).getAsJsonObject() : new JsonObject();
         try {
             for (int scale = 1; scale <= 6; scale++) {
                 WorldScaleManager.setCurrentScale(level, scale);
@@ -137,29 +135,22 @@ final class ValidVillageMapData {
                 int evaluated = 0;
                 System.out.println("VALID VILLAGE SCALE " + scale + ": " + ordered.size() + " unique native starts to evaluate");
                 for (Site site : ordered) {
-                    String key = scale+":"+site.set+":"+site.chunk.x+":"+site.chunk.z;
-                    JsonElement result = completed.get(key);
-                    if (result == null) {
-                        var chunk = new ProtoChunk(site.chunk, UpgradeData.EMPTY, height, biomeRegistry, null);
-                        int flags = sites.get(site);
-                        var state = states[(flags & 2) != 0 ? 1 : 0][site.set];
-                        generator.createStructures(level.registryAccess(), state, level.structureManager(), chunk, level.getStructureManager());
-                        result = JsonNull.INSTANCE;
-                        for (var entry : chunk.getAllStarts().entrySet()) {
-                            var start = entry.getValue();
-                            if (!start.isValid()) continue;
-                            var center = start.getBoundingBox().getCenter();
-                            JsonArray point = new JsonArray();
-                            point.add(center.getX()); point.add(center.getZ()); point.add(site.set);
-                            point.add(level.registryAccess().registryOrThrow(Registries.STRUCTURE).getKey(entry.getKey()).toString());
-                            point.add(start.getPieces().size());
-                            result = point;
-                        }
-                        completed.add(key, result);
-                        Files.writeString(checkpoint, gson.toJson(completed));
+                    JsonElement result = JsonNull.INSTANCE;
+                    var chunk = new ProtoChunk(site.chunk, UpgradeData.EMPTY, height, biomeRegistry, null);
+                    int flags = sites.get(site);
+                    var state = states[(flags & 2) != 0 ? 1 : 0][site.set];
+                    generator.createStructures(level.registryAccess(), state, level.structureManager(), chunk, level.getStructureManager());
+                    for (var entry : chunk.getAllStarts().entrySet()) {
+                        var start = entry.getValue();
+                        if (!start.isValid()) continue;
+                        var center = start.getBoundingBox().getCenter();
+                        JsonArray point = new JsonArray();
+                        point.add(center.getX()); point.add(center.getZ()); point.add(site.set);
+                        point.add(level.registryAccess().registryOrThrow(Registries.STRUCTURE).getKey(entry.getKey()).toString());
+                        point.add(start.getPieces().size());
+                        result = point;
                     }
                     if (!result.isJsonNull()) {
-                        int flags = sites.get(site);
                         if ((flags & 1) != 0) before.add(result);
                         if ((flags & 2) != 0) after.add(result);
                     }

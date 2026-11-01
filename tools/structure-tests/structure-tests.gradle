@@ -13,6 +13,8 @@ gradle.projectsEvaluated {
             systemProperty 'terradiff.structureTest.validVillages', findProperty('structureTestValidVillages') ?: 'false'
             systemProperty 'terradiff.structureTest.villageRegion', findProperty('structureTestVillageRegion') ?: ''
             systemProperty 'terradiff.structureTest.coarseEnd', findProperty('structureTestCoarseEnd') ?: '16'
+            systemProperty 'terradiff.structureTest.smokePhase', findProperty('structureTestSmokePhase') ?: ''
+            systemProperty 'terradiff.structureTest.legacySettings', findProperty('structureTestLegacySettings') ?: 'false'
             if (findProperty('structureTestDirectMLAgent')) {
                 jvmArguments.add '-javaagent:' + findProperty('structureTestDirectMLAgent')
             }

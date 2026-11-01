@@ -15,8 +15,9 @@ python tools/structure-tests/run.py --java-home /path/to/jdk-21 \
 ```
 
 The explicit init script adds test-only instrumentation to the development server.
-Two owned directories under ignored `build/structure-tests/` check normal scale-4
-initialization and the configuration opt-out. Each process exits inside the world-load
+Three owned directories under ignored `build/structure-tests/` check normal scale-4
+initialization, the configuration opt-out and `auto` with a legacy saved settings record.
+Each default process exits inside the world-load
 event, before spawn generation, and writes `structure-checks.txt`. Checks cover real
 datapack tags, the production lifecycle, an already-initialized locate index, exclusion
 queries against the scaled grid, idempotence and unchanged shared registry definitions
@@ -70,7 +71,8 @@ to a separate output directory. The overview and all six individual pairs show a
 village starts, not the earlier candidate grid. The backdrop is still coarse geography;
 building blocks and later decoration are not populated. No player save is used. Real
 terrain inference makes this slower than the candidate-only check. Each unique start is
-evaluated once across before/after, and checkpointed in the owned fixture directory.
+evaluated once across before/after. Partial progress is written for inspection, but accepted
+starts are regenerated on every run so old checkpoint results cannot hide changed inputs.
 
 `--village-region centerX,centerZ,extent` selects an explicit native-coordinate window;
 record why it was selected and preserve it across the comparison. `--coarse-end` extends
@@ -78,3 +80,19 @@ the backdrop when needed. The exporter rejects windows outside its backdrop or w
 less than 80% coarse land. `--backend windows` uses DirectML; an optional
 `--directml-agent` can preload an existing instance-local DLL. Both sides always use the
 same backend. The backend and region-selection method are recorded in the export.
+
+## Small generated-world smoke check
+
+Add `--world-smoke` to the runner instead of the map options. This uses one owned scale-4
+world in `build/structure-tests/world-smoke-scale4[-windows]/`, with `auto` policy and the
+registered scale-4 dimension height selected by a uniquely named fixture preset. Spawn
+generation is disabled so only the bounded test village area is requested. The known
+seed-42 start at chunk `(375, 782)` lies on the scaled grid and not the original grid.
+
+The first process generates the entire village bounding area plus one chunk of margin
+to FULL status, with a 400-chunk hard limit. It requires actual village beds and bells,
+the scaled placement, unchanged registry values and a successful native locate query.
+It saves normally. A second process reopens the same world and verifies the saved layout,
+village-block counts, saved policy and locate result. JSON results and separate logs are
+written into the owned fixture directory. No player save or existing launcher instance
+is edited. Model tensor caches may be reused without copying any generated world chunks.

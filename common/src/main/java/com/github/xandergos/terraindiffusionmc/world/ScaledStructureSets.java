@@ -21,6 +21,8 @@ public final class ScaledStructureSets {
             Registries.STRUCTURE_SET, ResourceLocation.fromNamespaceAndPath(
                     "terrain-diffusion-mc", "scale_with_terrain"));
 
+    private static final int MAX_SPACING = 4096;
+
     private final Map<StructureSet, Holder<StructureSet>> replacements = new IdentityHashMap<>();
     private final Map<StructurePlacement, StructurePlacement> placements = new IdentityHashMap<>();
     private final List<Holder<StructureSet>> sets;
@@ -60,7 +62,7 @@ public final class ScaledStructureSets {
     }
 
     static RandomSpreadStructurePlacement scale(RandomSpreadStructurePlacement original, int factor,
-                                                       DynamicOps<JsonElement> ops) {
+                                                DynamicOps<JsonElement> ops) {
         if (factor == 1) return original;
         // Codec copying retains salt, spread type, frequency/reducer, locate offset and exclusion zone.
         // Use registry-aware ops so other_set continues to reference its original registry holder.
@@ -68,9 +70,9 @@ public final class ScaledStructureSets {
         int spacing = Math.multiplyExact(original.spacing(), factor);
         int separation = Math.multiplyExact(original.separation(), factor);
         // Vanilla's random-spread codec accepts at most 4096 chunks. Preserve the ratio when capped.
-        if (spacing > 4096) {
-            separation = (int) ((long) separation * 4096 / spacing);
-            spacing = 4096;
+        if (spacing > MAX_SPACING) {
+            separation = (int) ((long) separation * MAX_SPACING / spacing);
+            spacing = MAX_SPACING;
         }
         encoded.addProperty("spacing", spacing);
         encoded.addProperty("separation", separation);

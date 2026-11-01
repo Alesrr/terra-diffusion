@@ -10,24 +10,29 @@ import net.minecraft.world.level.saveddata.SavedData;
 // Persisted per-world settings for terrain diffusion
 public final class WorldScaleSettingsState extends SavedData {
 
+    // Missing spacing policy means a legacy save, even though newly created worlds opt in.
     private static final Codec<WorldScaleSettingsState> CODEC = RecordCodecBuilder.create(instance -> instance.group(
             Codec.INT.optionalFieldOf("scale", WorldScaleManager.DEFAULT_SCALE)
                     .forGetter(WorldScaleSettingsState::getScale),
             Codec.BOOL.optionalFieldOf("explicit_scale", false)
-                    .forGetter(WorldScaleSettingsState::hasExplicitScale)
+                    .forGetter(WorldScaleSettingsState::hasExplicitScale),
+            Codec.BOOL.optionalFieldOf("scale_structure_spacing", false)
+                    .forGetter(WorldScaleSettingsState::scaleStructureSpacing)
     ).apply(instance, WorldScaleSettingsState::new));
 
     private int scale;
     private boolean explicitScale;
+    private boolean scaleStructureSpacing;
 
     // Creates a default state for worlds that do not yet have saved terrain diffusion settings
-    private WorldScaleSettingsState(int configuredScale, boolean hasExplicitScale) {
+    private WorldScaleSettingsState(int configuredScale, boolean hasExplicitScale, boolean scaleStructureSpacing) {
         this.scale = WorldScaleManager.clampScale(configuredScale);
         this.explicitScale = hasExplicitScale;
+        this.scaleStructureSpacing = scaleStructureSpacing;
     }
 
     public static WorldScaleSettingsState createDefault() {
-        return new WorldScaleSettingsState(WorldScaleManager.DEFAULT_SCALE, false);
+        return new WorldScaleSettingsState(WorldScaleManager.DEFAULT_SCALE, false, true);
     }
 
     // Type descriptor used by the saved data storage
@@ -42,7 +47,7 @@ public final class WorldScaleSettingsState extends SavedData {
     public static WorldScaleSettingsState fromNbt(CompoundTag nbt, HolderLookup.Provider registryLookup) {
         return CODEC.parse(NbtOps.INSTANCE, nbt)
                 .result()
-                .orElseGet(WorldScaleSettingsState::createDefault);
+                .orElseGet(() -> new WorldScaleSettingsState(WorldScaleManager.DEFAULT_SCALE, false, false));
     }
 
     // Type descriptor helper
@@ -62,6 +67,17 @@ public final class WorldScaleSettingsState extends SavedData {
     // Returns whether this world has an explicitly chosen scale
     public boolean hasExplicitScale() {
         return explicitScale;
+    }
+
+    public boolean scaleStructureSpacing() {
+        return scaleStructureSpacing;
+    }
+
+    public void setScaleStructureSpacing(boolean enabled) {
+        if (scaleStructureSpacing != enabled) {
+            scaleStructureSpacing = enabled;
+            setDirty();
+        }
     }
 
     // Applies a new persisted world scale and marks the state dirty

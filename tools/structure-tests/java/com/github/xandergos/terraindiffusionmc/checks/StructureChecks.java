@@ -4,6 +4,8 @@ import com.github.xandergos.terraindiffusionmc.world.ScaleAwareStructureState;
 import com.github.xandergos.terraindiffusionmc.world.ScaledStructureSets;
 import com.github.xandergos.terraindiffusionmc.world.WorldScaleSelectionState;
 import net.minecraft.core.Holder;
+import net.minecraft.nbt.CompoundTag;
+import net.minecraft.nbt.NbtIo;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
@@ -30,6 +32,17 @@ public final class StructureChecks {
     public static void configure(ServerAboutToStartEvent event) {
         if (Boolean.getBoolean("terradiff.structureTest")) {
             WorldScaleSelectionState.setPendingScale(Integer.getInteger("terradiff.structureTest.scale", 4));
+            if (Boolean.getBoolean("terradiff.structureTest.legacySettings")) {
+                Path path = Path.of("world/data/terrain_diffusion_world_settings.dat");
+                if (!Files.isRegularFile(Path.of("owned-structure-test.txt"))) throw new IllegalStateException("Unowned fixture");
+                if (!Files.exists(path)) {
+                    var data = new CompoundTag();
+                    data.putInt("scale", 4); data.putBoolean("explicit_scale", true);
+                    var root = new CompoundTag(); root.put("data", data);
+                    try { Files.createDirectories(path.getParent()); NbtIo.writeCompressed(root, path); }
+                    catch (java.io.IOException failure) { throw new IllegalStateException(failure); }
+                }
+            }
         }
     }
 
@@ -39,6 +52,10 @@ public final class StructureChecks {
                 || level.dimension() != Level.OVERWORLD) return;
         try {
             run(level);
+            if (!System.getProperty("terradiff.structureTest.smokePhase", "").isBlank()) {
+                WorldSmokeCheck.prepare(level);
+                return;
+            }
             if (Boolean.getBoolean("terradiff.structureTest.maps")) DensityMapData.export(level);
             if (Boolean.getBoolean("terradiff.structureTest.validVillages")) ValidVillageMapData.export(level);
             Files.writeString(Path.of("structure-checks.txt"), "PASS: lifecycle, tags, native locate index, exclusion grid, registry isolation\n");

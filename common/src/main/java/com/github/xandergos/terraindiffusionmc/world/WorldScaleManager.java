@@ -7,6 +7,7 @@ public final class WorldScaleManager {
     public static final int DEFAULT_SCALE = 2;
     private static final int MIN_SCALE = 1;
     public static final int MAX_SCALE = 6;
+    private static final String SETTINGS_ID = "terrain_diffusion_world_settings";
 
     private static volatile int currentScale = DEFAULT_SCALE;
 
@@ -15,8 +16,7 @@ public final class WorldScaleManager {
 
     // Loads or creates per-world scale settings and sets the active runtime value
     public static void initializeForWorld(ServerLevel serverWorld) {
-        WorldScaleSettingsState worldScaleSettingsState = serverWorld.getDataStorage()
-                .computeIfAbsent(WorldScaleSettingsState.TYPE, "terrain_diffusion_world_settings");
+        WorldScaleSettingsState worldScaleSettingsState = settingsForWorld(serverWorld);
 
         if (!worldScaleSettingsState.hasExplicitScale()) {
             Integer pendingScale = WorldScaleSelectionState.consumePendingScale();
@@ -25,6 +25,21 @@ public final class WorldScaleManager {
         }
 
         currentScale = clampScale(worldScaleSettingsState.getScale());
+    }
+
+    public static WorldScaleSettingsState settingsForWorld(ServerLevel serverWorld) {
+        WorldScaleSettingsState worldScaleSettingsState = serverWorld.getDataStorage()
+                .get(WorldScaleSettingsState.TYPE, SETTINGS_ID);
+        if (worldScaleSettingsState == null) {
+            worldScaleSettingsState = WorldScaleSettingsState.createDefault();
+            // A pre-existing world may predate even the scale-settings record.
+            boolean freshTerrainWorld = !serverWorld.getServer().getWorldData().overworldData().isInitialized()
+                    && serverWorld.getChunkSource().getGenerator().getBiomeSource() instanceof TerrainDiffusionBiomeSource;
+            worldScaleSettingsState.setScaleStructureSpacing(freshTerrainWorld);
+            serverWorld.getDataStorage().set(SETTINGS_ID, worldScaleSettingsState);
+        }
+
+        return worldScaleSettingsState;
     }
 
     // Returns the currently active world scale
@@ -36,8 +51,7 @@ public final class WorldScaleManager {
     public static void setCurrentScale(ServerLevel serverWorld, int configuredScale) {
         int clampedScale = clampScale(configuredScale);
 
-        WorldScaleSettingsState worldScaleSettingsState = serverWorld.getDataStorage()
-                .computeIfAbsent(WorldScaleSettingsState.TYPE, "terrain_diffusion_world_settings");
+        WorldScaleSettingsState worldScaleSettingsState = settingsForWorld(serverWorld);
 
         worldScaleSettingsState.setScale(clampedScale);
         currentScale = clampedScale;

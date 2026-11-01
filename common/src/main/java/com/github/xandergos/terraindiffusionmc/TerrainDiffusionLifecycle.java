@@ -96,11 +96,14 @@ public final class TerrainDiffusionLifecycle {
     public static void onWorldLoad(ServerLevel world) {
         if (world.dimension() == Level.OVERWORLD) {
             WorldScaleManager.initializeForWorld(world);
-            if (world.getChunkSource().getGenerator().getBiomeSource() instanceof TerrainDiffusionBiomeSource
-                    && TerrainDiffusionConfig.scaleStructureSpacing()) {
-                ((ScaleAwareStructureState) world.getChunkSource().getGeneratorState())
-                        .terrainDiffusion$configureStructureScale(WorldScaleManager.getCurrentScale(),
-                                world.registryAccess());
+            if (world.getChunkSource().getGenerator().getBiomeSource() instanceof TerrainDiffusionBiomeSource) {
+                var worldSettings = WorldScaleManager.settingsForWorld(world);
+                boolean scaleSpacing = TerrainDiffusionConfig.scaleStructureSpacing(worldSettings.scaleStructureSpacing());
+                worldSettings.setScaleStructureSpacing(scaleSpacing);
+                if (scaleSpacing) {
+                    ((ScaleAwareStructureState) world.getChunkSource().getGeneratorState())
+                            .terrainDiffusion$configureStructureScale(WorldScaleManager.getCurrentScale(), world.registryAccess());
+                }
             }
             WorldPipeline.setCacheRoot(world.getServer().getWorldPath(LevelResource.ROOT));
             LocalTerrainProvider.init(world.getSeed());
