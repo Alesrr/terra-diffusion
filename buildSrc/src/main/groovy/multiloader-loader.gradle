@@ -9,7 +9,7 @@ sourceSets {
     }
 }
 
-// Fabric uses Loom's splitEnvironmentSourceSets() and wires common client code into
+// Every loader except Fabric compiles the common client sources into main
 if (project.name != 'fabric') {
     sourceSets {
         main {

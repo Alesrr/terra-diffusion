@@ -46,8 +46,12 @@ final class BiomeView {
                 System.arraycopy(raw[1], ch * ph * pw + (r + 1) * pw + 1, climate, ch * h * w + r * w, w);
             }
         }
+        int rr = BiomeClassifier.RELIEF_RADIUS;
+        float[] wide = LocalTerrainProvider.explorerData(i0 - 1 - rr, j0 - 1 - rr, i0 + h + 1 + rr, j0 + w + 1 + rr, false)[0];
+        float[] relief = LocalTerrainProvider.cropInner(BiomeClassifier.relief(wide, ph + 2 * rr, pw + 2 * rr), pw + 2 * rr, rr, ph, pw);
+        float[] sea = LocalTerrainProvider.cropInner(BiomeClassifier.seaShare(wide, ph + 2 * rr, pw + 2 * rr), pw + 2 * rr, rr + 1, h, w);
         short[] ids = BiomeClassifier.classify(elev, climate, i0 * scale, j0 * scale, scale,
-                padded, h, w, NATIVE_RESOLUTION, null, null);
+                padded, relief, sea, h, w, NATIVE_RESOLUTION, null, null);
         last = new Result(key, h, w, ids, paint(ids, padded, h, w));
         return last;
     }

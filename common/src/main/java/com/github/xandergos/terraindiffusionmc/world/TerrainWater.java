@@ -1,11 +1,13 @@
 package com.github.xandergos.terraindiffusionmc.world;
 
 import com.github.xandergos.terraindiffusionmc.config.TerrainDiffusionConfig;
+import com.github.xandergos.terraindiffusionmc.pipeline.BlockWater;
 import com.github.xandergos.terraindiffusionmc.pipeline.DeepCaverns;
 import com.github.xandergos.terraindiffusionmc.pipeline.KarstNetwork;
 import com.github.xandergos.terraindiffusionmc.pipeline.LocalTerrainProvider;
 import com.github.xandergos.terraindiffusionmc.pipeline.LocalTerrainProvider.HeightmapData;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.LiquidBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.dimension.DimensionType;
 import net.minecraft.world.level.levelgen.Aquifer;
@@ -15,24 +17,17 @@ public final class TerrainWater {
     public static final int NO_WATER = Integer.MIN_VALUE;
     public static final int NO_GROUND = Integer.MIN_VALUE;
 
-    private static final boolean DRY_CAVES =
-            !"false".equals(System.getProperty("terradiff.dryCaves"));
-
-    private static final boolean KARST_WATER =
-            !"false".equals(System.getProperty("terradiff.karstWater"));
-
-    private static final int POOL_DEPTH =
-            Integer.parseInt(System.getProperty("terradiff.poolDepth", "6"));
+    private static final int POOL_DEPTH = 6;
 
     private static final long NO_BAND =
             ((long) Integer.MIN_VALUE << 32) | (Integer.MAX_VALUE & 0xffffffffL);
 
-    private static final int PERCHED_AIR_SIDES =
-            Integer.parseInt(System.getProperty("terradiff.perchedSides", "3"));
+    private static final int PERCHED_AIR_SIDES = 3;
 
     private static final class TileRef {
         int startX = Integer.MIN_VALUE;
         int startZ = Integer.MIN_VALUE;
+        int gen = -1;
         HeightmapData data;
     }
 
@@ -106,13 +101,40 @@ public final class TerrainWater {
         int startZ = (z >> tileShift) << tileShift;
 
         TileRef ref = LAST.get();
-        if (ref.startX != startX || ref.startZ != startZ) {
-            ref.startX = startX;
-            ref.startZ = startZ;
+        int gen = LocalTerrainProvider.generation();
+        if (ref.startX != startX || ref.startZ != startZ || ref.gen != gen) {
             ref.data = LocalTerrainProvider.getInstance().fetchHeightmap(
                     startZ, startX, startZ + tileSize, startX + tileSize);
+            ref.startX = startX;
+            ref.startZ = startZ;
+            ref.gen = gen;
         }
         return ref.data;
+    }
+
+    // Highest y in the 16x16 column block at (minX, minZ) that the noise fill can make anything but air, or MAX_VALUE if unknown
+    public static int highestFilled(int minX, int minZ, int seaLevel) {
+        int top = Integer.MIN_VALUE;
+        for (int dz = 0; dz < 16; dz++) {
+            for (int dx = 0; dx < 16; dx++) {
+                int x = minX + dx, z = minZ + dz;
+                int ground = groundY(x, z);
+                if (ground == NO_GROUND) return Integer.MAX_VALUE;
+                top = Math.max(top, ground - 1);
+                int level = waterLevelY(x, z);
+                int surface = level != NO_WATER ? level : ground < seaLevel ? seaLevel : NO_WATER;
+                if (surface == NO_WATER) continue;
+                top = Math.max(top, surface - 1);
+                int flow = waterFlow(x, z);
+                if (flow == 0) continue;
+                if (flow <= BlockWater.MAX_RAMP) {
+                    top = Math.max(top, surface);
+                } else if (flow >= BlockWater.CURTAIN) {
+                    top = Math.max(top, surface + flow - BlockWater.CURTAIN - 1);
+                }
+            }
+        }
+        return top;
     }
 
     private static int tileStart(int v) {
@@ -136,6 +158,19 @@ public final class TerrainWater {
             return NO_WATER;
         }
         return HeightConverter.convertToMinecraftHeight(meters);
+    }
+
+    public static int waterFlow(int x, int z) {
+        HeightmapData data = tileFor(x, z);
+        if (data == null || data.waterFlow == null) {
+            return 0;
+        }
+        int localX = x - tileStart(x);
+        int localZ = z - tileStart(z);
+        if (localX < 0 || localZ < 0 || localX >= data.width || localZ >= data.height) {
+            return 0;
+        }
+        return data.waterFlow[localZ][localX] & 0xff;
     }
 
     public static int groundY(int x, int z) {
@@ -173,7 +208,7 @@ public final class TerrainWater {
         return y < levelY && y >= levelY - POOL_DEPTH;
     }
 
-    // Pool extent for a column, packed as (top << 32) | bottom, or #NO_BAND
+    // Pool extent for a column, packed as (top << 32) | bottom, or NO_BAND
     private static long bandAt(int x, int z, int ground) {
         if (ground == NO_GROUND) return NO_BAND;
         float table = karstWaterTableY(x, z);
@@ -194,9 +229,8 @@ public final class TerrainWater {
         return band != NO_BAND && y >= (int) band && y < (int) (band >> 32);
     }
 
-    // True where a pool column shows a horizontal face to open air, so the terrain puts stone there
+    // True where a pool column faces open air sideways and needs a stone rim
     public static boolean rimSolid(int x, int y, int z) {
-        if (!KARST_WATER) return false;
         long band = cachedBand(x, z);
         if (!covers(band, y)) return false;
         Columns c = COLUMNS.get();
@@ -208,8 +242,7 @@ public final class TerrainWater {
         return bank == 2;
     }
 
-    private static final int RIM_RADIUS =
-            Integer.parseInt(System.getProperty("terradiff.rimRadius", "2"));
+    private static final int RIM_RADIUS = 2;
 
     private static final int[] RIM_DX = {1, -1, 0, 0, 1, 1, -1, -1};
     private static final int[] RIM_DZ = {0, 0, 1, -1, 1, -1, 1, -1};
@@ -233,7 +266,6 @@ public final class TerrainWater {
 
     // True inside an underground river reach, at or below its water line
     public static boolean undergroundRiver(int x, int y, int z) {
-        if (!KARST_WATER) return false;
         KarstNetwork net = karstNetwork(x, z);
         if (net.isEmpty()) return false;
         float surface = net.riverWaterY(x, y, z);
@@ -262,6 +294,14 @@ public final class TerrainWater {
         Aquifer.FluidStatus stream = new Aquifer.FluidStatus(Integer.MAX_VALUE / 2, fluid);
         Aquifer.FluidStatus lava =
                 new Aquifer.FluidStatus(Integer.MAX_VALUE / 2, Blocks.LAVA.defaultBlockState());
+        boolean levelled = fluid.hasProperty(LiquidBlock.LEVEL);
+        Aquifer.FluidStatus[] flowing = new Aquifer.FluidStatus[BlockWater.MAX_RAMP + 1];
+        for (int k = 1; k <= BlockWater.MAX_RAMP; k++) {
+            flowing[k] = new Aquifer.FluidStatus(Integer.MAX_VALUE / 2,
+                    levelled ? fluid.setValue(LiquidBlock.LEVEL, k) : fluid);
+        }
+        Aquifer.FluidStatus falling = new Aquifer.FluidStatus(Integer.MAX_VALUE / 2,
+                levelled ? fluid.setValue(LiquidBlock.LEVEL, 8) : fluid);
         ThreadLocal<PickerColumns> columns = ThreadLocal.withInitial(PickerColumns::new);
 
         return (x, y, z) -> {
@@ -269,13 +309,15 @@ public final class TerrainWater {
             int s = slotOf(x, z);
             int g = LocalTerrainProvider.generation();
             if (p.x[s] != x || p.z[s] != z || p.gen[s] != g) {
-                int ground = DRY_CAVES ? cachedGround(x, z) : NO_GROUND;
+                int ground = cachedGround(x, z);
                 int level = waterLevelY(x, z);
-                long band = KARST_WATER && ground != NO_GROUND ? cachedBand(x, z) : NO_BAND;
+                long band = ground != NO_GROUND ? cachedBand(x, z) : NO_BAND;
                 p.ground[s] = ground;
                 p.status[s] = level == NO_WATER
                         ? ocean
                         : new Aquifer.FluidStatus(level, fluid);
+                p.flow[s] = waterFlow(x, z);
+                p.top[s] = level != NO_WATER ? level : ground != NO_GROUND && ground < seaLevel ? seaLevel : NO_WATER;
                 p.streamTop[s] = (int) (band >> 32);
                 p.streamBottom[s] = (int) band;
                 p.x[s] = x;
@@ -285,13 +327,20 @@ public final class TerrainWater {
 
             int ground = p.ground[s];
             if (ground == NO_GROUND || y >= ground) {
+                int flow = p.flow[s];
+                int top = p.top[s];
+                if (flow != 0 && top != NO_WATER && y >= top) {
+                    if (flow <= BlockWater.MAX_RAMP) {
+                        if (y == top) return flowing[flow];
+                    } else if (flow >= BlockWater.CURTAIN) {
+                        int height = flow - BlockWater.CURTAIN;
+                        if (y < top + height) return y == top + height - 1 ? flowing[1] : falling;
+                    }
+                }
                 return p.status[s];
             }
             if (y <= DeepCaverns.LAVA_Y) {
                 return lava;
-            }
-            if (!KARST_WATER) {
-                return dry;
             }
             if (undergroundRiver(x, y, z)) {
                 return stream;
@@ -312,6 +361,8 @@ public final class TerrainWater {
         final int[] ground = new int[SLOTS];
         final int[] streamTop = new int[SLOTS];
         final int[] streamBottom = new int[SLOTS];
+        final int[] flow = new int[SLOTS];
+        final int[] top = new int[SLOTS];
         final Aquifer.FluidStatus[] status = new Aquifer.FluidStatus[SLOTS];
 
         PickerColumns() {

@@ -67,7 +67,7 @@ public final class ExplorerServer {
         server.createContext("/api/detail_raw", ExplorerServer::handleDetailRaw);
         server.createContext("/api/detail_biomes", ExplorerServer::handleDetailBiomes);
         server.createContext("/api/detail_water.png", ExplorerServer::handleDetailWater);
-        // Several handler threads so a slow water request never holds up an image
+        // Handler threads for image and water requests
         server.setExecutor(Executors.newFixedThreadPool(HTTP_THREADS, r -> {
             Thread t = new Thread(r, "terrain-explorer-http");
             t.setDaemon(true);

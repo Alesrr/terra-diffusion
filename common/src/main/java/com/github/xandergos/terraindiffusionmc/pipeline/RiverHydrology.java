@@ -12,48 +12,31 @@ import java.util.concurrent.atomic.AtomicLong;
 
 public final class RiverHydrology {
 
-    private static final int REGION_PX = 1024;
+    private static final int REGION_PX = 128;
 
-    private static final int MARGIN_PX =
-            Integer.parseInt(System.getProperty("terradiff.margin", "512"));
+    private static final int MARGIN_PX = 512;
     private static final int WINDOW_PX = REGION_PX + 2 * MARGIN_PX;
 
     private static final int DOWNSAMPLE = 1;
     private static final int GRID = WINDOW_PX / DOWNSAMPLE;
 
-    // Judge a channel stranded across the whole window
-    private static final boolean OCEAN_GATE =
-            !"false".equals(System.getProperty("terradiff.oceanGate"));
-
     private static final int CROP_RIM = 28;
     private static final int CROP_OFF = MARGIN_PX / DOWNSAMPLE - CROP_RIM;
     private static final int CROP_N = REGION_PX / DOWNSAMPLE + 2 * CROP_RIM;
 
-    private static float[] crop(float[] full) {
-        float[] out = new float[CROP_N * CROP_N];
-        for (int r = 0; r < CROP_N; r++) {
-            System.arraycopy(full, (CROP_OFF + r) * GRID + CROP_OFF, out, r * CROP_N, CROP_N);
-        }
-        return out;
-    }
-
     private static final float RIVER_THRESHOLD = 600f;
-
-    private static final float WIDTH_GROWTH_DECADES = 2.0f;
 
     private static final float DISCHARGE_AREA_EXPONENT = 0.8f;
     private static final float WIDTH_Q_EXPONENT = 0.5f;
     private static final float DEPTH_Q_EXPONENT = 0.4f;
 
-    private static final float BANKFULL_WIDTH_M =
-            Float.parseFloat(System.getProperty("terradiff.bankfullWidth", "58"));
+    private static final float BANKFULL_WIDTH_M = 58f;
     private static final float BANKFULL_DEPTH_M = 9f;
 
     private static final float MAX_WIDTH_M = 340f;
     private static final float MAX_DEPTH_M = 45f;
 
-    private static final float CONFINEMENT_FRACTION =
-            Float.parseFloat(System.getProperty("terradiff.confinement", "0.72"));
+    private static final float CONFINEMENT_FRACTION = 0.72f;
 
     private static final int CONFINEMENT_SCAN_CELLS = 16;
     private static final float CONFINEMENT_RISE_M = 18f;
@@ -62,152 +45,104 @@ public final class RiverHydrology {
 
     private static final float FREEBOARD_BLOCKS = 0.5f;
 
-    private static final float GORGE_LIMIT_BLOCKS = 3f;
+    private static final float V2_INFLUENCE_CELLS = 24f;
 
-    private static final float FALL_MIN_DROP_BLOCKS = 2f;
+    // Streams speed range of river water
+    public static final float RIVER_MIN_SPEED = 0.35f, RIVER_MAX_SPEED = 1.4f;
 
-    private static final boolean FALLS_ENABLED =
-            Boolean.getBoolean("terradiff.falls");
+    // Streams speed of open lake water, slowest and fastest, below the river range
+    private static final float LAKE_MIN_SPEED = 0.05f;
+    private static final float LAKE_BODY_SPEED = 0.22f;
 
-    private static final int FIELD_SMOOTH_PASSES =
-            Integer.parseInt(System.getProperty("terradiff.fieldSmooth", "12"));
+    // Cells over which the current speeds up into the outflow, plus two outflow widths
+    private static final float LAKE_FUNNEL_CELLS = 6f;
 
-    private static final boolean EXACT_DISTANCE =
-            !"false".equals(System.getProperty("terradiff.exactDistance"));
+    // Cells of lake an inflowing river keeps its direction for, plus one and a half river widths
+    private static final float LAKE_PLUME_CELLS = 3f;
 
-    private static final boolean SECTION_STAMP =
-            !"false".equals(System.getProperty("terradiff.sectionStamp"));
+    // Share of the inflowing river's speed the plume starts with
+    private static final float LAKE_PLUME_KEEP = 0.6f;
 
-    private static final float STAMP_MIN_BLOCKS =
-            Float.parseFloat(System.getProperty("terradiff.stampMinBlocks", "5"));
+    // Cells along the path to the outflow that set a lake cell's direction
+    private static final int LAKE_TANGENT_CELLS = 8;
 
-    private static final float STAMP_REACH =
-            Float.parseFloat(System.getProperty("terradiff.stampReach", "3.0"));
+    private static final int V2_WIDTH_SMOOTH = 6;
 
-    private static final int FIELD_BLUR_PASSES =
-            Integer.parseInt(System.getProperty("terradiff.fieldBlur", "16"));
+    private static final int V2_SMOOTH_CELLS = 4;
 
-    private static final int DEQUANT_PASSES =
-            Integer.parseInt(System.getProperty("terradiff.dequantPasses", "8"));
+    private static final float V2_LAKE_MIN_DEPTH_M = 4f;
 
-    private static final float OVERLAP_REACH =
-            Float.parseFloat(System.getProperty("terradiff.overlapReach", "2.0"));
+    private static final int V2_LAKE_MIN_CELLS = 40;
 
-    private static final float MIN_SOURCE_ELEV_M = 200f;
+    static final float V2_HEAD_MIN_M = 2500f;
 
-    private static final float HOLD_QUANTILE =
-            Float.parseFloat(System.getProperty("terradiff.holdQuantile", "0.15"));
+    private static final int V2_FLOW_VIEWS = 12;
 
-    private static final float OVERLAP_AGREE_BLOCKS =
-            Float.parseFloat(System.getProperty("terradiff.overlapAgree", "0.5"));
+    private static final int V2_LAKE_CORES = 128;
 
-    private static final int ARC_BLUR_PASSES =
-            Integer.parseInt(System.getProperty("terradiff.arcBlur", "6"));
+    private static final int V2_LAKE_FINALS = 8192;
 
-    private static final int SCAN_CAP =
-            Integer.parseInt(System.getProperty("terradiff.scanCap", "20"));
+    private static final long V2_LAKE_MAX_CELLS = 3000000L;
 
-    private static final boolean MIN_CORNER_WATER = Boolean.getBoolean("terradiff.minCornerWater");
+    private static final int V2_LAKE_WALK = 12;
 
-    private static final boolean REJECT_DRAINED_LAKES =
-            !"false".equals(System.getProperty("terradiff.rejectDrainedLakes"));
+    private static final long V2_LAKE_OUTLET_CELLS = 200L;
 
-    private static final boolean TIMING = Boolean.getBoolean("terradiff.timing");
 
-    private static long PHASE_T0;
+    private static final int V2_LAKE_MAX_REGIONS = 96;
 
-    private static void phase(String name) {
-        InfiniteTensor.throwIfCancelled();
-        if (!TIMING) {
-            return;
-        }
-        long now = System.nanoTime();
-        System.err.printf("diag phase %-16s %7.0f ms%n", name, (now - PHASE_T0) / 1.0e6);
-        PHASE_T0 = now;
-    }
+    private static final int V2_LAKE_PIT_CELLS = 20000;
 
-    private static final float MAX_INFLUENCE_CELLS = 12f;
+    private static final float V2_LAKE_CLIMB_M = 600f;
+
+
+    private static final int V2_LINKS = 4096;
+
+    private static final int V2_LINK_DEPTH = 24;
+
+    private static final float V2_LINK_MIN_ACC = 400f;
+
+    private static final float V2_MOUTH_CELLS = 16f;
+
+    private static final float V2_MOUTH_WIDTHS = 6f;
+
+    private static final float V2_MOUTH_FLARE = 2.2f;
+
+    private static final float V2_MOUTH_DEPTH_BLOCKS = 1f;
+
+    private static final int V2_MAX_MARGIN = 128;
+
+    private static final int V2_BASE_MARGIN = 128;
+
+    private static final int V2_LOOP_HOPS = 6;
+
+
+    private static final float V2_CHANNEL_AREA = 4000f;
+
+    private static final float V2_WATCH_AREA = Math.min(V2_CHANNEL_AREA,
+            4000f);
+
+    private static final float V2_SEAM_ENTRY = 0.5f;
+
+    private static final float V2_WIDTH_RAMP = 4f;
+
+    private static final float V2_ESCALATE_DROP_M = 20f;
+
+    private static final float V2_ESCALATE_BASIN_M = 20f;
+
+    private static final int V2_EDGE_CELLS = 32;
+
+    private static final float V2_MISSING_RIVER_AREA = 16000f;
+
+    private static final int V2_MISSING_RIVER_MAX_MARGIN = 256;
+
+    private static final float V2_MISSING_RIVER_FRACTION = 0.25f;
+
+    private static final float V2_BASIN_DROP_FACTOR = 2f;
 
     private static final float FILL_EPSILON_M = 1.0e-2f;
 
-    private static final float FLAT_DROP_M = 0.5f;
-
-    private static final float FLAT_TILT_MAX_M = 0.4f;
-
-    private static final float FLAT_GRADIENT_M = 1.0e-3f;
-
-    private static final int[] FACET_CR = { 0, -1, -1, 0, 0, 1, 1, 0};
-    private static final int[] FACET_CC = { 1, 0, 0, -1, -1, 0, 0, 1};
-    private static final int[] FACET_DR = {-1, -1, -1, -1, 1, 1, 1, 1};
-    private static final int[] FACET_DC = { 1, 1, -1, -1, -1, -1, 1, 1};
-
     private static final float CELL_SIZE_M = 30f;
-
-    private static final double CHANNEL_SLOPE_EXPONENT = 2.0;
-
-    private static final double CHANNEL_INITIATION = 900.0;
-
-    // Ceiling on the slope term at channel initiation
-    private static final double CHANNEL_SLOPE_CAP =
-            Double.parseDouble(System.getProperty("terradiff.slopeCap", "0.5"));
-
-    private static final float CONVERGENCE_MIN_M = 0.35f;
-
-    private static final int CONVERGENCE_RADIUS = 3;
-
-    private static final double MFD_EXPONENT = 1.1;
-
-    private static final FastNoiseLite ROUTING_DETAIL = makeRoutingNoise();
-
-    private static final float ROUTING_DETAIL_M = 1.0f;
-
-    private static FastNoiseLite makeRoutingNoise() {
-        FastNoiseLite fnl = new FastNoiseLite(0x5EA1);
-        fnl.SetNoiseType(FastNoiseLite.NoiseType.Perlin);
-        fnl.SetFractalType(FastNoiseLite.FractalType.FBm);
-
-        fnl.SetFrequency(1f / 22f);
-        fnl.SetFractalOctaves(1);
-        fnl.SetFractalLacunarity(2f);
-        fnl.SetFractalGain(0.5f);
-        return fnl;
-    }
-
-    private static final int MEANDER_TANGENT_CELLS = 8;
-
-    private static final float MEANDER_CLIMB_M = 3f;
-
-    private static final float[] MEANDER_BAND_CELLS = {8f, 24f, 72f};
-    private static final FastNoiseLite[] MEANDER_BAND_I = {
-            makeMeanderNoise(0x51DE, MEANDER_BAND_CELLS[0]),
-            makeMeanderNoise(0x51DF, MEANDER_BAND_CELLS[1]),
-            makeMeanderNoise(0x51E0, MEANDER_BAND_CELLS[2])};
-    private static final FastNoiseLite[] MEANDER_BAND_J = {
-            makeMeanderNoise(0x7A2C, MEANDER_BAND_CELLS[0]),
-            makeMeanderNoise(0x7A2D, MEANDER_BAND_CELLS[1]),
-            makeMeanderNoise(0x7A2E, MEANDER_BAND_CELLS[2])};
-
-    private static final float MEANDER_AMPLITUDE_WIDTHS = 2.4f;
-    private static final float MEANDER_ASPECT = 4.4f;
-
-    private static final float MEANDER_MIN_AMPLITUDE_M = 78f;
-
-    private static final float MEANDER_SPACE_FRACTION = 0.42f;
-
-    private static FastNoiseLite makeMeanderNoise(int seed, float wavelengthCells) {
-        FastNoiseLite fnl = new FastNoiseLite(seed);
-        fnl.SetNoiseType(FastNoiseLite.NoiseType.Perlin);
-        fnl.SetFractalType(FastNoiseLite.FractalType.FBm);
-        fnl.SetFrequency(1f / wavelengthCells);
-        fnl.SetFractalOctaves(2);
-        fnl.SetFractalLacunarity(2f);
-        fnl.SetFractalGain(0.45f);
-        return fnl;
-    }
-
-    private static final float MOUTH_AREA = 140000f;
-
-    private static final float MIN_TRIBUTARY_AREA = 40000f;
 
     private static final float LAKE_MIN_DEPTH_M = 15f;
 
@@ -235,9 +170,8 @@ public final class RiverHydrology {
         final float[] depth;
         final float[] fall;
         final KarstNetwork karst;
-        private int[] lakeBody;
-        private byte[] bodyVerdict;
-
+        private float[] segments;
+        private float[] lakeFlow;
         Region(int regionI, int regionJ, float[] distance, float[] magnitude, float[] water,
                float[] lake, float[] lakeDeep, float[] delta,
                float[] width, float[] depth, float[] fall, KarstNetwork karst) {
@@ -256,28 +190,176 @@ public final class RiverHydrology {
         }
     }
 
-    private static final float SEAM_BLEND_CELLS =
-            Float.parseFloat(System.getProperty("terradiff.seamBlend", "24"));
+    public interface InflowSource {
+        float[] inflow(int windowI, int windowJ, int size, float[] elev);
+    }
 
-    private static final int MAX_CACHED_REGIONS = 6;
+    public static volatile InflowSource INFLOW;
 
-    private static float[] ARC_POS;
+    private static final int MAX_CACHED_REGIONS =
+            Math.max(6, Math.min(96, (int) (6L * 1080 * 1080 / ((long) CROP_N * CROP_N))));
+
+    private static final class FlowView {
+        final int regionI, regionJ, margin, g, windowI, windowJ, popped;
+        final float[] elev, filled, acc, lake, lakeDeep;
+        final int[] down, order;
+        final boolean[] channel, high, firm;
+        final boolean riversHere;
+
+        FlowView(int regionI, int regionJ, int margin, int g, int windowI, int windowJ, int popped, float[] elev, float[] filled,
+                 float[] acc, float[] lake, float[] lakeDeep, int[] down, int[] order, boolean[] channel, boolean[] high,
+                 boolean[] firm, boolean riversHere) {
+            this.regionI = regionI;
+            this.regionJ = regionJ;
+            this.margin = margin;
+            this.g = g;
+            this.windowI = windowI;
+            this.windowJ = windowJ;
+            this.popped = popped;
+            this.elev = elev;
+            this.filled = filled;
+            this.acc = acc;
+            this.lake = lake;
+            this.lakeDeep = lakeDeep;
+            this.down = down;
+            this.order = order;
+            this.channel = channel;
+            this.high = high;
+            this.firm = firm;
+            this.riversHere = riversHere;
+        }
+    }
+
+    private static final class LakeCore {
+        final float[] elev = new float[REGION_PX * REGION_PX];
+        final float[] lake = new float[REGION_PX * REGION_PX];
+        final float[] fill = new float[REGION_PX * REGION_PX];
+        final boolean[] fed = new boolean[REGION_PX * REGION_PX];
+        final float[] level = new float[REGION_PX * REGION_PX];
+        final float[] deep = new float[REGION_PX * REGION_PX];
+        final java.util.List<Integer> outlets = new java.util.ArrayList<>();
+        final java.util.Set<Integer> barrier = new java.util.HashSet<>();
+        final boolean[] firm = new boolean[REGION_PX * REGION_PX];
+        final short[] next = new short[REGION_PX * REGION_PX];
+        short[] exitOf;
+        boolean seeded;
+
+        LakeCore(FlowView v) {
+            for (int r = 0; r < REGION_PX; r++) {
+                int from = (v.margin + r) * v.g + v.margin;
+                System.arraycopy(v.elev, from, elev, r * REGION_PX, REGION_PX);
+                System.arraycopy(v.lake, from, lake, r * REGION_PX, REGION_PX);
+                System.arraycopy(v.filled, from, fill, r * REGION_PX, REGION_PX);
+                System.arraycopy(v.firm, from, firm, r * REGION_PX, REGION_PX);
+                if (v.high != null) System.arraycopy(v.high, from, fed, r * REGION_PX, REGION_PX);
+                for (int c = 0; c < REGION_PX; c++) {
+                    int d = v.down[from + c];
+                    int nr = d < 0 ? -1 : d / v.g - v.margin, nc = d < 0 ? -1 : d % v.g - v.margin;
+                    next[r * REGION_PX + c] = nr >= 0 && nc >= 0 && nr < REGION_PX && nc < REGION_PX ? (short) (nr * REGION_PX + nc) : -1;
+                }
+            }
+            Arrays.fill(level, Float.NaN);
+        }
+
+        void feedFrom(int ix) {
+            for (int at = ix; at >= 0 && !fed[at]; at = next[at]) fed[at] = true;
+        }
+    }
+
+    private static final class LakeFinal {
+        final java.util.List<long[]> masks = new java.util.ArrayList<>();
+        final java.util.List<float[]> levels = new java.util.ArrayList<>();
+        final java.util.List<Integer> outlets = new java.util.ArrayList<>();
+        final java.util.Set<Integer> barrier = new java.util.HashSet<>();
+
+        void add(boolean[] mask, float level, float deep) {
+            long[] bits = new long[mask.length / 64 + 1];
+            for (int ix = 0; ix < mask.length; ix++) {
+                if (mask[ix]) bits[ix >> 6] |= 1L << (ix & 63);
+            }
+            masks.add(bits);
+            levels.add(new float[]{level, deep});
+        }
+
+        void applyTo(LakeCore core) {
+            for (int m = 0; m < masks.size(); m++) {
+                long[] bits = masks.get(m);
+                float[] v = levels.get(m);
+                for (int ix = 0; ix < core.level.length; ix++) {
+                    if ((bits[ix >> 6] >> (ix & 63) & 1L) != 0L) {
+                        core.level[ix] = v[0];
+                        core.deep[ix] = v[1];
+                    }
+                }
+            }
+            core.outlets.addAll(outlets);
+            core.barrier.addAll(barrier);
+        }
+    }
+
+    private static final class RiverLink {
+        final int regionI, regionJ, exits;
+        final boolean riversHere;
+        final int[] landI, landJ, exitAsk;
+        final float[] exitAcc, exitLevel;
+        final boolean[] exitHigh;
+        final short[] ringExit;
+        final float[] ringLake;
+        final int[] falseFrom, trueUpTo;
+        int nearLakes, epoch;
+        boolean lakesSeen;
+        final boolean[] trueExact;
+
+        RiverLink(int regionI, int regionJ, boolean riversHere, int exits, int[] landI, int[] landJ, float[] exitAcc,
+                  boolean[] exitHigh, float[] exitLevel, int[] exitAsk, short[] ringExit, float[] ringLake, int nearLakes) {
+            this.regionI = regionI;
+            this.regionJ = regionJ;
+            this.riversHere = riversHere;
+            this.exits = exits;
+            this.landI = landI;
+            this.landJ = landJ;
+            this.exitAcc = exitAcc;
+            this.exitHigh = exitHigh;
+            this.exitLevel = exitLevel;
+            this.nearLakes = nearLakes;
+            this.exitAsk = exitAsk;
+            this.ringExit = ringExit;
+            this.ringLake = ringLake;
+            this.falseFrom = new int[exits];
+            Arrays.fill(this.falseFrom, Integer.MAX_VALUE);
+            this.trueUpTo = new int[exits];
+            Arrays.fill(this.trueUpTo, -1);
+            this.trueExact = new boolean[exits];
+        }
+    }
+
+    private static <V> Map<Long, V> recentOnly(int size) {
+        return java.util.Collections.synchronizedMap(new java.util.LinkedHashMap<Long, V>(16, 0.75f, true) {
+            @Override
+            protected boolean removeEldestEntry(Map.Entry<Long, V> eldest) {
+                return size() > size;
+            }
+        });
+    }
 
     // Hydrology regions built for one pipeline, least recently used evicted first
     public static final class RegionCache {
         private final Map<Long, Region> regions = new ConcurrentHashMap<>();
+        private final Map<Long, FlowView> views = recentOnly(V2_FLOW_VIEWS);
+        private final Map<Long, RiverLink> links = recentOnly(V2_LINKS);
+        private final Map<Long, LakeCore> lakes = recentOnly(V2_LAKE_CORES);
+        private final Map<Long, LakeFinal> finals = recentOnly(V2_LAKE_FINALS);
+        private int outletEpoch;
         private final Map<Long, AtomicLong> used = new ConcurrentHashMap<>();
         private final AtomicLong clock = new AtomicLong();
-        private boolean seamNeighbours = true;
 
         public void clear() {
             regions.clear();
             used.clear();
-        }
-
-        // When off, a seam blends only with a neighbouring region that is already built
-        public void buildSeamNeighbours(boolean on) {
-            seamNeighbours = on;
+            views.clear();
+            links.clear();
+            lakes.clear();
+            finals.clear();
         }
     }
 
@@ -301,9 +383,6 @@ public final class RiverHydrology {
 
     public static KarstNetwork karstAt(WorldPipeline pipeline, float nativeI, float nativeJ,
                                       float blockM) {
-        if (!KarstHydrology.ENABLED) {
-            return KarstNetwork.EMPTY;
-        }
         int ri = Math.floorDiv((int) Math.floor(nativeI), REGION_PX);
         int rj = Math.floorDiv((int) Math.floor(nativeJ), REGION_PX);
         Region region = regionFor(pipeline, ri, rj, blockM);
@@ -314,41 +393,7 @@ public final class RiverHydrology {
                                        float blockM) {
         int ri = Math.floorDiv((int) Math.floor(nativeI), REGION_PX);
         int rj = Math.floorDiv((int) Math.floor(nativeJ), REGION_PX);
-        float[] own = sampleFrom(pipeline, ri, rj, nativeI, nativeJ, blockM);
-        if (own == null || SEAM_BLEND_CELLS <= 0) {
-            return own;
-        }
-
-        float fi = nativeI - ri * (float) REGION_PX;
-        float fj = nativeJ - rj * (float) REGION_PX;
-        float di = Math.min(fi, REGION_PX - fi);
-        float dj = Math.min(fj, REGION_PX - fj);
-        int ni = ri, nj = rj;
-        float dist;
-        if (di <= dj) {
-            dist = di;
-            ni = fi < REGION_PX - fi ? ri - 1 : ri + 1;
-        } else {
-            dist = dj;
-            nj = fj < REGION_PX - fj ? rj - 1 : rj + 1;
-        }
-        if (dist >= SEAM_BLEND_CELLS) {
-            return own;
-        }
-        RegionCache cache = pipeline.hydrology;
-        if (!cache.seamNeighbours && !cache.regions.containsKey(key(ni, nj))) {
-            return own;
-        }
-        float[] other = sampleFrom(pipeline, ni, nj, nativeI, nativeJ, blockM);
-        if (other == null) {
-            return own;
-        }
-
-        float wOther = 0.5f * (1f - dist / SEAM_BLEND_CELLS);
-        for (int k = 0; k < own.length; k++) {
-            own[k] = own[k] + (other[k] - own[k]) * wOther;
-        }
-        return own;
+        return sampleFrom(pipeline, ri, rj, nativeI, nativeJ, blockM);
     }
 
     private static float[] sampleFrom(WorldPipeline pipeline, int regionI, int regionJ,
@@ -374,24 +419,52 @@ public final class RiverHydrology {
         int c = a + CROP_N;
         int d2 = c + 1;
 
-        float d = lerp(lerp(region.distance[a], region.distance[b], tj),
-                       lerp(region.distance[c], region.distance[d2], tj), ti);
-        if (d >= MAX_INFLUENCE_CELLS) {
+        float d;
+        float segLevel = Float.NaN;
+        float dirR = 0f, dirC = 0f, slope = 0f;
+        if (region.segments != null) {
+            d = Float.MAX_VALUE;
+            for (int k : new int[]{a, b, c, d2}) {
+                int o = SEGMENT_FIELDS * k;
+                float[] sg = region.segments;
+                if (Float.isNaN(sg[o])) continue;
+                for (int part = 0; part < 2; part++) {
+                    int p0 = o + 2 * part;
+                    float vr = sg[p0 + 2] - sg[p0], vc = sg[p0 + 3] - sg[p0 + 1];
+                    float len2 = vr * vr + vc * vc;
+                    float t = len2 > 1.0e-6f ? Math.max(0f, Math.min(1f, ((gi - sg[p0]) * vr + (gj - sg[p0 + 1]) * vc) / len2)) : 0f;
+                    float er = gi - (sg[p0] + t * vr), ec = gj - (sg[p0 + 1] + t * vc);
+                    float dd = (float) Math.sqrt(er * er + ec * ec);
+                    if (dd < d) {
+                        d = dd;
+                        float tl = t;
+                        if (len2 > 1.0e-6f) {
+                            tl = Math.abs(vr) >= Math.abs(vc) ? (gi - sg[p0]) / vr : (gj - sg[p0 + 1]) / vc;
+                            tl = Math.max(0f, Math.min(1f, tl));
+                        }
+                        if (len2 > 1.0e-6f) {
+                            dirR = vr;
+                            dirC = vc;
+                            slope = (sg[o + 6 + part] - sg[o + 7 + part]) / ((float) Math.sqrt(len2) * CELL_SIZE_M);
+                            if (slope >= V2_FALL_SLOPE) tl = 1f;
+                        }
+                        segLevel = sg[o + 6 + part] + (sg[o + 7 + part] - sg[o + 6 + part]) * tl;
+                    }
+                }
+            }
+        } else {
+            d = lerp(lerp(region.distance[a], region.distance[b], tj),
+                     lerp(region.distance[c], region.distance[d2], tj), ti);
+        }
+        if (d >= V2_INFLUENCE_CELLS) {
             return null;
         }
         float m = lerp(lerp(region.magnitude[a], region.magnitude[b], tj),
                        lerp(region.magnitude[c], region.magnitude[d2], tj), ti);
 
-        float w = Float.NaN;
-        if (MIN_CORNER_WATER) {
-            float[] corners = {region.water[a], region.water[b], region.water[c], region.water[d2]};
-            for (float cw : corners) {
-                if (!Float.isNaN(cw) && (Float.isNaN(w) || cw < w)) {
-                    w = cw;
-                }
-            }
-        } else {
-            w = region.water[nearest(region, gi, gj)];
+        float w = region.water[nearest(region, gi, gj)];
+        if (!Float.isNaN(segLevel)) {
+            w = segLevel;
         }
         if (Float.isNaN(w)) {
             w = region.water[nearest(region, gi, gj)];
@@ -416,111 +489,11 @@ public final class RiverHydrology {
 
         float fl = Math.max(Math.max(region.fall[a], region.fall[b]),
                             Math.max(region.fall[c], region.fall[d2]));
-        return new float[]{d * DOWNSAMPLE, m, w, dw, ws, wid, dep, fl};
+        return new float[]{d * DOWNSAMPLE, m, w, dw, ws, wid, dep, fl, dirR, dirC, slope};
     }
 
     private static float lerp(float a, float b, float t) {
         return a + (b - a) * t;
-    }
-
-    // A lake body crossing into a neighbour must be mostly lake there too, or it is dropped
-    private static final float LAKE_AGREE =
-            Float.parseFloat(System.getProperty("terradiff.lakeAgree", "0.25"));
-
-    private static final byte BODY_KEEP = 1, BODY_DROP = 2;
-
-    private static final int[][] NEIGHBOURS = {{-1, 0}, {1, 0}, {0, -1}, {0, 1}};
-
-    // Labels each 8-connected lake body in the region's crop; -1 where there is no lake
-    private static synchronized int[] lakeBodies(Region region) {
-        if (region.lakeBody != null) {
-            return region.lakeBody;
-        }
-        int n = CROP_N * CROP_N;
-        int[] label = new int[n];
-        Arrays.fill(label, -1);
-        int[] stack = new int[n];
-        int bodies = 0;
-        for (int seed = 0; seed < n; seed++) {
-            if (label[seed] != -1 || Float.isNaN(region.lake[seed])) continue;
-            int top = 0;
-            stack[top++] = seed;
-            label[seed] = bodies;
-            while (top > 0) {
-                int k = stack[--top];
-                int r = k / CROP_N, c = k % CROP_N;
-                for (int dr = -1; dr <= 1; dr++) {
-                    int rr = r + dr;
-                    if (rr < 0 || rr >= CROP_N) continue;
-                    for (int dc = -1; dc <= 1; dc++) {
-                        int cc = c + dc;
-                        if ((dr == 0 && dc == 0) || cc < 0 || cc >= CROP_N) continue;
-                        top = claim(region, label, stack, top, rr * CROP_N + cc, bodies);
-                    }
-                }
-            }
-            bodies++;
-        }
-        region.bodyVerdict = new byte[bodies];
-        region.lakeBody = label;
-        return label;
-    }
-
-    private static int claim(Region region, int[] label, int[] stack, int top, int k, int body) {
-        if (label[k] == -1 && !Float.isNaN(region.lake[k])) {
-            label[k] = body;
-            stack[top++] = k;
-        }
-        return top;
-    }
-
-    // Whether the lake body holding this cell survives comparison with every neighbour it reaches
-    private static boolean lakeConfirmed(WorldPipeline pipeline, Region region, int at, float blockM) {
-        if (LAKE_AGREE <= 0f) {
-            return true;
-        }
-        int body = lakeBodies(region)[at];
-        byte verdict = region.bodyVerdict[body];
-        if (verdict == 0) {
-            verdict = judgeBody(pipeline, region, body, blockM);
-            region.bodyVerdict[body] = verdict;
-        }
-        return verdict == BODY_KEEP;
-    }
-
-    private static byte judgeBody(WorldPipeline pipeline, Region region, int body, float blockM) {
-        int[] label = region.lakeBody;
-        int band = 2 * CROP_RIM;
-        for (int[] d : NEIGHBOURS) {
-            int r0 = d[0] > 0 ? CROP_N - band : 0, r1 = d[0] < 0 ? band : CROP_N;
-            int c0 = d[1] > 0 ? CROP_N - band : 0, c1 = d[1] < 0 ? band : CROP_N;
-
-            boolean reaches = false;
-            for (int r = r0; r < r1 && !reaches; r++) {
-                for (int c = c0; c < c1; c++) {
-                    if (label[r * CROP_N + c] == body) { reaches = true; break; }
-                }
-            }
-            if (!reaches) continue;
-
-            Region other = regionFor(pipeline, region.regionI + d[0], region.regionJ + d[1], blockM);
-            if (other == null || other.lake == null) continue;
-            int seen = 0, agree = 0;
-            for (int r = r0; r < r1; r++) {
-                for (int c = c0; c < c1; c++) {
-                    if (label[r * CROP_N + c] != body) continue;
-                    int ni = (r + CROP_OFF) * DOWNSAMPLE + region.regionI * REGION_PX - MARGIN_PX;
-                    int nj = (c + CROP_OFF) * DOWNSAMPLE + region.regionJ * REGION_PX - MARGIN_PX;
-                    int oi = (ni - (other.regionI * REGION_PX - MARGIN_PX)) / DOWNSAMPLE - CROP_OFF;
-                    int oj = (nj - (other.regionJ * REGION_PX - MARGIN_PX)) / DOWNSAMPLE - CROP_OFF;
-                    if (oi < 0 || oj < 0 || oi >= CROP_N || oj >= CROP_N) continue;
-                    seen++;
-                    if (!Float.isNaN(other.lake[oi * CROP_N + oj])) agree++;
-                }
-            }
-            if (seen > 0 && agree < LAKE_AGREE * seen) return BODY_DROP;
-        }
-        return BODY_KEEP;
     }
 
     public static float[] sampleLake(WorldPipeline pipeline, float nativeI, float nativeJ,
@@ -543,49 +516,41 @@ public final class RiverHydrology {
         if (Float.isNaN(near)) {
             return null;
         }
-        if (!lakeConfirmed(pipeline, region, at, blockM)) {
-            return null;
-        }
         float deep = region.lakeDeep == null || Float.isNaN(region.lakeDeep[at])
                 ? 0f : region.lakeDeep[at];
         return new float[]{(float) Math.ceil(Math.floor(near / blockM) * blockM), deep};
     }
 
-    private static int[] landmassArea(float[] elev) {
-        int n = GRID * GRID;
-        int[] area = new int[n];
-        boolean[] seen = new boolean[n];
-        int[] queue = new int[n];
-        int[] nr4 = {-1, 1, 0, 0}, nc4 = {0, 0, -1, 1};
-
-        for (int start = 0; start < n; start++) {
-            if (seen[start] || elev[start] < 0f) {
-                continue;
-            }
-            int head = 0, tail = 0;
-            queue[tail++] = start;
-            seen[start] = true;
-            while (head < tail) {
-                int i = queue[head++];
-                int r = i / GRID, c = i % GRID;
-                for (int k = 0; k < 4; k++) {
-                    int rr = r + nr4[k], cc = c + nc4[k];
-                    if (rr < 0 || cc < 0 || rr >= GRID || cc >= GRID) {
-                        continue;
-                    }
-                    int j = rr * GRID + cc;
-                    if (seen[j] || elev[j] < 0f) {
-                        continue;
-                    }
-                    seen[j] = true;
-                    queue[tail++] = j;
+    // Lake levels over a native window, each cell read through the region of the nearest cell in [ti0, ti1] x [tj0, tj1]
+    public static float[] lakeWindow(WorldPipeline pipeline, int ci0, int cj0, int rows, int cols,
+                                     int ti0, int tj0, int ti1, int tj1, float blockM) {
+        float[] out = new float[rows * cols];
+        Arrays.fill(out, Float.NaN);
+        Region region = null;
+        long held = 0L;
+        boolean holding = false;
+        for (int r = 0; r < rows; r++) {
+            int ci = ci0 + r, oi = Math.max(ti0, Math.min(ti1, ci));
+            for (int c = 0; c < cols; c++) {
+                int cj = cj0 + c, oj = Math.max(tj0, Math.min(tj1, cj));
+                int ri = Math.floorDiv(oi, REGION_PX), rj = Math.floorDiv(oj, REGION_PX);
+                long k = key(ri, rj);
+                if (!holding || k != held) {
+                    region = regionFor(pipeline, ri, rj, blockM);
+                    held = k;
+                    holding = true;
                 }
-            }
-            for (int m = 0; m < tail; m++) {
-                area[queue[m]] = tail;
+                if (region == null || region.lake == null) continue;
+                int gi = Math.floorDiv(ci - (ri * REGION_PX - MARGIN_PX), DOWNSAMPLE) - CROP_OFF;
+                int gj = Math.floorDiv(cj - (rj * REGION_PX - MARGIN_PX), DOWNSAMPLE) - CROP_OFF;
+                if (gi < 0 || gj < 0 || gi >= CROP_N || gj >= CROP_N) continue;
+                int at = gi * CROP_N + gj;
+                float near = region.lake[at];
+                if (Float.isNaN(near)) continue;
+                out[r * cols + c] = (float) Math.ceil(Math.floor(near / blockM) * blockM);
             }
         }
-        return area;
+        return out;
     }
 
     private static float[][] lakes(float[] elev, float[] fillDepth, float[] seaDist, int[] landArea,
@@ -647,7 +612,7 @@ public final class RiverHydrology {
 
             boolean atBorder = minR == 0 || minC == 0 || maxR == GRID - 1 || maxC == GRID - 1;
 
-            if ((REJECT_DRAINED_LAKES && drained) || atBorder
+            if (drained || atBorder
                     || deepest < LAKE_MIN_DEPTH_M || tail < LAKE_MIN_CELLS
                     || nearestSea < LAKE_MIN_SEA_CELLS
                     || landArea[start] < LAKE_MIN_LANDMASS_CELLS
@@ -660,12 +625,6 @@ public final class RiverHydrology {
                 lake[i] = elev[i] + fillDepth[i];
                 deep[i] = deepest;
                 accepted++;
-            }
-            if (Boolean.getBoolean("terradiff.diag")) {
-                System.err.printf(
-                        "diag lake cells=%d span=%dx%d deepest=%.1fm spill=%.1fm centreLocal=%d,%d%n",
-                        accepted, maxR - minR + 1, maxC - minC + 1, deepest,
-                        elev[start] + fillDepth[start], (minR + maxR) / 2, (minC + maxC) / 2);
             }
         }
 
@@ -706,19 +665,6 @@ public final class RiverHydrology {
         int bits = Float.floatToIntBits(key);
         bits ^= (bits >> 31) & 0x7FFFFFFF;
         return (((long) bits) << 32) | (index & 0xFFFFFFFFL);
-    }
-
-    private static int[] orderBy(float[] key, int n) {
-        long[] packed = new long[n];
-        for (int i = 0; i < n; i++) {
-            packed[i] = pack(key[i], i);
-        }
-        Arrays.sort(packed);
-        int[] order = new int[n];
-        for (int i = 0; i < n; i++) {
-            order[i] = (int) packed[i];
-        }
-        return order;
     }
 
     private static final class LongHeap {
@@ -778,7 +724,7 @@ public final class RiverHydrology {
             return cached;
         }
 
-        Region built = build(pipeline, regionI, regionJ, blockM);
+        Region built = buildV2(pipeline, regionI, regionJ, blockM);
         cache.regions.put(k, built);
         cache.used.put(k, new AtomicLong(cache.clock.incrementAndGet()));
         evict(cache);
@@ -796,870 +742,1408 @@ public final class RiverHydrology {
                 .forEach(k -> { cache.regions.remove(k); cache.used.remove(k); });
     }
 
-    private static Region build(WorldPipeline pipeline, int regionI, int regionJ, float blockM) {
-        PHASE_T0 = System.nanoTime();
-        int windowI = regionI * REGION_PX - MARGIN_PX;
-        int windowJ = regionJ * REGION_PX - MARGIN_PX;
+    private static Region buildV2(WorldPipeline pipeline, int regionI, int regionJ, float blockM) {
+        RiverLink self = linkFor(pipeline, regionI, regionJ, blockM);
+        FlowView view = flowFor(pipeline, regionI, regionJ, blockM);
+        pipeline.hydrology.views.remove(key(regionI, regionJ));
+        return drawV2(pipeline, view, self, blockM);
+    }
 
-        float[] fine = pipeline.get(windowI, windowJ,
-                windowI + WINDOW_PX, windowJ + WINDOW_PX, false)[0];
-        phase("modelDecode");
-
-        float[] elev = new float[GRID * GRID];
-        for (int r = 0; r < GRID; r++)
-            for (int c = 0; c < GRID; c++) {
-                float sum = 0;
-                for (int dr = 0; dr < DOWNSAMPLE; dr++)
-                    for (int dc = 0; dc < DOWNSAMPLE; dc++)
-                        sum += fine[(r * DOWNSAMPLE + dr) * WINDOW_PX + (c * DOWNSAMPLE + dc)];
-                elev[r * GRID + c] = sum / (DOWNSAMPLE * DOWNSAMPLE);
-            }
-
-        float[] routing = new float[GRID * GRID];
-        for (int r = 0; r < GRID; r++) {
-            for (int c = 0; c < GRID; c++) {
-                int i = r * GRID + c;
-                float nx = (windowJ + c) * (float) DOWNSAMPLE;
-                float ny = (windowI + r) * (float) DOWNSAMPLE;
-
-                float offSea = Math.min(1f, Math.abs(elev[i]) / (2f * ROUTING_DETAIL_M));
-                routing[i] = elev[i]
-                        + ROUTING_DETAIL.GetNoise(nx, ny) * ROUTING_DETAIL_M * offSea;
-            }
+    private static FlowView flowFor(WorldPipeline pipeline, int regionI, int regionJ, float blockM) {
+        Map<Long, FlowView> views = pipeline.hydrology.views;
+        FlowView view = views.get(key(regionI, regionJ));
+        if (view != null) {
+            return view;
         }
-
-        phase("elev+routing");
-        float[] seaDist = seaDistance(elev);
-        float[] fillDepth = new float[GRID * GRID];
-        int[] down = new int[GRID * GRID];
-        float[] slope = new float[GRID * GRID];
-
-        phase("seaDistance");
-        float[] acc = accumulate(pipeline, routing, elev, fillDepth, down, slope, windowI, windowJ,
-                blockM, seaDist, null);
-
-        float[] distance = new float[GRID * GRID];
-        float[] magnitude = new float[GRID * GRID];
-        Arrays.fill(distance, Float.MAX_VALUE);
-
-        boolean[] channel = new boolean[GRID * GRID];
-        float[] surface = new float[GRID * GRID];
-        phase("accumulate");
-        for (int i = 0; i < GRID * GRID; i++) surface[i] = routing[i] + fillDepth[i];
-        int[] bySurface = orderBy(surface, GRID * GRID);
-
-        for (int i = 0; i < GRID * GRID; i++) {
-            if (elev[i] < 0f) {
-                continue;
+        int margin = V2_BASE_MARGIN;
+        while (true) {
+            boolean last = margin >= V2_MAX_MARGIN;
+            view = flowV2(pipeline, regionI, regionJ, blockM, margin, last);
+            if (view != null) {
+                views.put(key(regionI, regionJ), view);
+                if (!pipeline.hydrology.lakes.containsKey(key(regionI, regionJ))) {
+                    pipeline.hydrology.lakes.put(key(regionI, regionJ), newLakeCore(pipeline, view));
+                }
+                return view;
             }
-            double s = Math.max(slope[i], 1.0e-6);
-
-            int rr0 = i / GRID, cc0 = i % GRID;
-            if (rr0 == 0 || cc0 == 0 || rr0 == GRID - 1 || cc0 == GRID - 1) {
-                continue;
-            }
-
-            double sGate = Math.min(s, CHANNEL_SLOPE_CAP);
-            // MIN_SOURCE_ELEV_M asks where a river may be BORN, so it must not be asked of one
-            boolean continuation = acc[i] >= SEED_MIN_CELLS;
-            if ((elev[i] >= MIN_SOURCE_ELEV_M || continuation)
-                    && acc[i] * Math.pow(sGate, CHANNEL_SLOPE_EXPONENT) >= CHANNEL_INITIATION) {
-                channel[i] = true;
-            }
+            margin = Math.min(V2_MAX_MARGIN, margin * 2);
         }
+    }
 
-        if (Boolean.getBoolean("terradiff.diag")) {
-            int chan = 0, negDown = 0, nonAdj = 0, mouths = 0, cont = 0, zeroDown = 0, broken = 0;
-            for (int i = 0; i < GRID * GRID; i++) {
-                if (!channel[i] || elev[i] < 0f) {
-                    continue;
-                }
-                chan++;
-                int d = successor(down, i);
-                if (d >= 0) {
-                    if (elev[d] < 0f) {
-                        mouths++;
-                    } else if (channel[d]) {
-                        cont++;
-                    } else {
-                        broken++;
-                    }
-                } else if (down[i] < 0) {
-                    negDown++;
-                } else {
-                    nonAdj++;
-                    if (down[i] == 0) zeroDown++;
-                }
-            }
-            System.err.printf(
-                    "diag region %d,%d: channel=%d continues=%d mouths=%d stops(down<0)=%d stops(nonAdjacent)=%d broken(successor not channel)=%d%n",
-                    regionI, regionJ, chan, cont, mouths, negDown, nonAdj, broken);
+    private static LakeCore lakeCore(WorldPipeline pipeline, int regionI, int regionJ, float blockM) {
+        LakeCore core = pipeline.hydrology.lakes.get(key(regionI, regionJ));
+        if (core == null) {
+            core = newLakeCore(pipeline, flowFor(pipeline, regionI, regionJ, blockM));
+            pipeline.hydrology.lakes.put(key(regionI, regionJ), core);
         }
+        return core;
+    }
 
-        for (int start = 0; start < GRID * GRID; start++) {
-            if (!channel[start]) {
-                continue;
-            }
-            int at = start;
-            for (int step = 0; step < GRID * 4; step++) {
-                int d = successor(down, at);
-                if (d < 0 || elev[d] < 0f || channel[d]) {
-                    break;
-                }
-                channel[d] = true;
-                at = d;
-            }
+    private static LakeCore newLakeCore(WorldPipeline pipeline, FlowView v) {
+        LakeCore core = new LakeCore(v);
+        core.exitOf = exitOf(v);
+        LakeFinal done = pipeline.hydrology.finals.get(key(v.regionI, v.regionJ));
+        if (done != null) {
+            done.applyTo(core);
+            for (int ix : done.outlets) core.feedFrom(ix);
         }
+        return core;
+    }
 
-        final byte UNKNOWN = 0, REACHES = 1, STRANDED = 2;
-        byte[] fate = new byte[GRID * GRID];
-        int[] path = new int[GRID * 4 + 2];
-        for (int startCell = 0; startCell < GRID * GRID; startCell++) {
-            if (!channel[startCell] || fate[startCell] != UNKNOWN) {
-                continue;
-            }
-            int len = 0;
-            int at = startCell;
-            byte verdict = STRANDED;
-            while (len < path.length) {
-                path[len++] = at;
-                fate[at] = STRANDED;
-                int r = at / GRID, c = at % GRID;
+    private static void floodLake(WorldPipeline pipeline, int startI, int startJ, float startLevel, float blockM) {
+        floodLake(pipeline, startI, startJ, startLevel, blockM, false);
+    }
 
-                int inRegionLow = OCEAN_GATE ? 1 : MARGIN_PX / DOWNSAMPLE;
-                int inRegionHigh = OCEAN_GATE
-                        ? GRID - 1
-                        : (MARGIN_PX + REGION_PX) / DOWNSAMPLE;
-                if (r < inRegionLow || c < inRegionLow || r >= inRegionHigh || c >= inRegionHigh) {
-                    verdict = REACHES;
-                    break;
-                }
-                int d = successor(down, at);
-                if (d < 0) {
-                    break;
-                }
-                if (elev[d] < 0f) {
-                    verdict = REACHES;
-                    break;
-                }
-                if (fate[d] == REACHES) {
-                    verdict = REACHES;
-                    break;
-                }
-                if (fate[d] == STRANDED && d != at) {
-
-                    break;
-                }
-                at = d;
-            }
-            for (int k = 0; k < len; k++) {
-                fate[path[k]] = verdict;
-            }
-        }
-        int pruned = 0;
-        for (int i = 0; i < GRID * GRID; i++) {
-            if (channel[i] && fate[i] == STRANDED) {
-                channel[i] = false;
-                pruned++;
-            }
-        }
-        if (Boolean.getBoolean("terradiff.diag")) {
-            System.err.printf("diag pruned %d stranded channel cells%n", pruned);
-        }
-        int[] chanIdx = channelCells(channel, null);
-        int[] chanUp = channelCells(channel, bySurface);
-
-        if (Boolean.getBoolean("terradiff.diag")) {
-            int chan2 = 0, brk2 = 0, mouth2 = 0, dead2 = 0;
-            int deadBorder = 0, deadInterior = 0, deadNearSea = 0;
-            float deadElevSum = 0f;
-            int deadMinSeaDist = Integer.MAX_VALUE;
-            for (int i = 0; i < GRID * GRID; i++) {
-                if (!channel[i] || elev[i] < 0f) continue;
-                chan2++;
-                int d = successor(down, i);
-                if (d < 0) {
-                    dead2++;
-                    int r = i / GRID, c = i % GRID;
-                    boolean border = r == 0 || c == 0 || r == GRID - 1 || c == GRID - 1;
-                    if (border) deadBorder++; else deadInterior++;
-                    deadElevSum += elev[i];
-                    int sd = (int) seaDist[i];
-                    deadMinSeaDist = Math.min(deadMinSeaDist, sd);
-                    if (sd <= 8) deadNearSea++;
-                }
-                else if (elev[d] < 0f) mouth2++;
-                else if (!channel[d]) brk2++;
-            }
-            System.err.printf("diag AFTER walk: channel=%d mouths=%d deadEnds=%d broken=%d%n",
-                    chan2, mouth2, dead2, brk2);
-
-            int repeats = 0, turns = 0, longestRun = 0;
-            for (int i = 0; i < GRID * GRID; i++) {
-                if (!channel[i] || elev[i] < 0f) continue;
-                int d = successor(down, i);
-                if (d < 0 || !channel[d]) continue;
-                int e = successor(down, d);
-                if (e < 0 || !channel[e]) continue;
-                int d1r = (d / GRID) - (i / GRID), d1c = (d % GRID) - (i % GRID);
-                int d2r = (e / GRID) - (d / GRID), d2c = (e % GRID) - (d % GRID);
-                if (d1r == d2r && d1c == d2c) repeats++; else turns++;
-            }
-            for (int start = 0; start < GRID * GRID; start++) {
-                if (!channel[start] || elev[start] < 0f) continue;
-                int at = start, run = 1, pr = Integer.MIN_VALUE, pc = Integer.MIN_VALUE;
-                for (int step = 0; step < 512; step++) {
-                    int d = successor(down, at);
-                    if (d < 0 || !channel[d]) break;
-                    int dr = (d / GRID) - (at / GRID), dc = (d % GRID) - (at % GRID);
-                    if (dr == pr && dc == pc) {
-                        run++;
-                        if (run > longestRun) longestRun = run;
-                    } else {
-                        run = 1;
-                    }
-                    pr = dr; pc = dc;
-                    at = d;
-                }
-            }
-            int dirTotal = repeats + turns;
-            System.err.printf("diag straightness: sameStep=%.1f%% (%d of %d)  longestRun=%d cells%n",
-                    dirTotal == 0 ? 0.0 : 100.0 * repeats / dirTotal, repeats, dirTotal, longestRun);
-            System.err.printf("diag deadEnds: border=%d interior=%d nearSea(<=8cells)=%d meanElev=%.1fm minSeaDist=%d%n",
-                    deadBorder, deadInterior, deadNearSea,
-                    dead2 == 0 ? 0f : deadElevSum / dead2,
-                    deadMinSeaDist == Integer.MAX_VALUE ? -1 : deadMinSeaDist);
-
-            int trunk = -1;
-            float bestAcc = 0f;
-            for (int i = 0; i < GRID * GRID; i++) {
-                if (!channel[i] || elev[i] < 0f || seaDist[i] < 10f) continue;
-                if (acc[i] > bestAcc) { bestAcc = acc[i]; trunk = i; }
-            }
-            if (trunk >= 0) {
-                System.err.printf("diag trunk from r=%d c=%d elev=%.0fm seaDist=%.0f acc=%.0f%n",
-                        trunk / GRID, trunk % GRID, elev[trunk], seaDist[trunk], acc[trunk]);
-                int at = trunk;
-                for (int step = 0; step < 400; step++) {
-                    int d = successor(down, at);
-                    if (d < 0) {
-                        System.err.printf("  step %d: STOP no successor at r=%d c=%d elev=%.0fm seaDist=%.0f%n",
-                                step, at / GRID, at % GRID, elev[at], seaDist[at]);
-                        break;
-                    }
-                    if (elev[d] < 0f) {
-                        System.err.printf("  step %d: REACHED SEA from r=%d c=%d elev=%.0fm%n",
-                                step, at / GRID, at % GRID, elev[at]);
-                        break;
-                    }
-                    if (step % 40 == 0 || !channel[d]) {
-                        System.err.printf("  step %d: r=%d c=%d elev=%.0fm seaDist=%.0f channel=%b%n",
-                                step, d / GRID, d % GRID, elev[d], seaDist[d], channel[d]);
-                    }
-                    at = d;
-                }
-            }
-        }
-
-        phase("channelWalk");
-        float[][] lakeFields = lakes(elev, fillDepth, seaDist, landmassArea(elev), channel);
-        float[] lake = lakeFields[0];
-        float[] lakeDeep = lakeFields[1];
-
-        float[] perR = new float[GRID * GRID];
-        float[] perC = new float[GRID * GRID];
-        phase("lakes");
-        flowTangents(elev, chanIdx, down, perR, perC);
-
-        float[] widthM = new float[GRID * GRID];
-        float[] depthM = new float[GRID * GRID];
-        phase("flowTangents");
-        hydraulicGeometry(elev, channel, chanIdx, chanUp, acc, down, perR, perC, widthM, depthM);
-
-        float[] offR = new float[GRID * GRID];
-        float[] offC = new float[GRID * GRID];
-        phase("hydraulicGeom");
-        meanderOffsets(elev, chanIdx, widthM, perR, perC, windowI, windowJ, offR, offC);
-
-        String probe = System.getProperty("terradiff.probe");
-        if (probe != null) {
-            String[] p = probe.split(",");
-            int pi = Integer.parseInt(p[0].trim()), pj = Integer.parseInt(p[1].trim());
-            int pr = pi - windowI, pc = pj - windowJ;
-            if (pr >= 0 && pc >= 0 && pr < GRID && pc < GRID) {
-                int pIdx = pr * GRID + pc;
-                double ps = Math.max(slope[pIdx], 1.0e-6);
-                System.err.printf(
-                        "probe region %d,%d sees (%d,%d) at local (%d,%d): channel=%b elev=%.1f "
-                                + "acc=%.0f slope=%.5f accSlope2=%.0f (needs %.0f) fillDepth=%.2f%n",
-                        regionI, regionJ, pi, pj, pr, pc, channel[pIdx], elev[pIdx], acc[pIdx],
-                        slope[pIdx], acc[pIdx] * Math.pow(ps, CHANNEL_SLOPE_EXPONENT),
-                        CHANNEL_INITIATION, fillDepth[pIdx]);
-            }
-        }
-
-        String box = System.getProperty("terradiff.probeBox");
-        if (box != null) {
-            String[] b = box.split(",");
-            int bi0 = Integer.parseInt(b[0].trim()), bj0 = Integer.parseInt(b[1].trim());
-            int bi1 = Integer.parseInt(b[2].trim()), bj1 = Integer.parseInt(b[3].trim());
-            int bstep = Integer.parseInt(b[4].trim());
-            System.err.printf("probeBox region %d,%d  digit=log10(acc) clamped 0-9, '#'=channel%n",
-                    regionI, regionJ);
-            for (int pi = bi0; pi <= bi1; pi += bstep) {
-                StringBuilder sb = new StringBuilder(String.format("  i=%6d ", pi));
-                for (int pj = bj0; pj <= bj1; pj += bstep) {
-                    int pr = pi - windowI, pc = pj - windowJ;
-                    if (pr < 0 || pc < 0 || pr >= GRID || pc >= GRID) {
-                        sb.append('?');
-                        continue;
-                    }
-                    int k = pr * GRID + pc;
-                    if (channel[k]) {
-                        sb.append('#');
-                    } else {
-                        int mag10 = (int) Math.max(0, Math.min(9,
-                                Math.log10(Math.max(1.0, acc[k]))));
-                        sb.append((char) ('0' + mag10));
-                    }
-                }
-                System.err.println(sb);
-            }
-        }
-
-        float[] filled = new float[GRID * GRID];
-        for (int i = 0; i < GRID * GRID; i++) {
-            filled[i] = elev[i] + fillDepth[i];
-        }
-
-        phase("meanderOffsets");
-        float[] holdM = containGround(elev, elev, chanIdx, offR, offC, perR, perC, widthM);
-
-        float[] water = new float[GRID * GRID];
-        float[] fallDrop = new float[GRID * GRID];
-        solveLevels(elev, channel, chanIdx, chanUp, lake, holdM, depthM, widthM, down, blockM,
-                water, fallDrop);
-
-        if (prunePerched(channel, water, elev, lake, down, blockM)) {
-            chanIdx = channelCells(channel, null);
-            chanUp = channelCells(channel, bySurface);
-        }
-
-        if (Boolean.getBoolean("terradiff.diag")) {
-            int chan = 0, rises = 0, steps2 = 0, falls = 0, spill = 0, junc = 0, juncStep = 0, juncFall = 0;
-            float worstRise = 0f, worstFall = 0f;
-            final int[] cnr = {-1, -1, -1, 0, 0, 1, 1, 1}, cnc = {-1, 0, 1, -1, 1, -1, 0, 1};
-            int[] upstreamCount = new int[GRID * GRID];
-            for (int i = 0; i < GRID * GRID; i++) {
-                if (!channel[i] || Float.isNaN(water[i])) continue;
-                int d = successor(down, i);
-                if (d >= 0 && channel[d]) upstreamCount[d]++;
-            }
-            for (int i = 0; i < GRID * GRID; i++) {
-                if (!channel[i] || Float.isNaN(water[i]) || elev[i] < 0f) continue;
-                chan++;
-                if (fallDrop[i] >= FALL_MIN_DROP_BLOCKS) {
-                    falls++;
-                    worstFall = Math.max(worstFall, fallDrop[i]);
-                }
-
-                if (!Float.isNaN(holdM[i]) && water[i] > holdM[i] + 1.0e-3f) spill++;
-                int d = successor(down, i);
-                if (d < 0 || !channel[d] || Float.isNaN(water[d])) continue;
-                if (water[d] > water[i] + 1.0e-3f) {
-                    rises++;
-                    worstRise = Math.max(worstRise, water[d] - water[i]);
-                }
-                int drop = (int) Math.round((water[i] - water[d]) / blockM);
-                if (drop > 1 && fallDrop[d] < FALL_MIN_DROP_BLOCKS) steps2++;
-            }
-            for (int j = 0; j < GRID * GRID; j++) {
-                if (!channel[j] || upstreamCount[j] < 2 || Float.isNaN(water[j])) continue;
-                int r = j / GRID, c = j % GRID;
-                if (r <= 0 || c <= 0 || r >= GRID - 1 || c >= GRID - 1) continue;
-                junc++;
-                float lo = Float.MAX_VALUE, hi = -Float.MAX_VALUE;
+    private static void floodLake(WorldPipeline pipeline, int startI, int startJ, float startLevel, float blockM, boolean river) {
+        Map<Long, LakeCore> cores = new java.util.HashMap<>();
+        Map<Long, boolean[]> seen = new java.util.HashMap<>();
+        PriorityQueue<float[]> shore = new PriorityQueue<>(Comparator.comparingDouble(c -> c[0]));
+        java.util.ArrayDeque<int[]> open = new java.util.ArrayDeque<>();
+        float level = startLevel, bottom = Float.MAX_VALUE;
+        long cells = 0;
+        boolean fed = river, joined = false;
+        int[] below = null;
+        seen.computeIfAbsent(key(Math.floorDiv(startI, REGION_PX), Math.floorDiv(startJ, REGION_PX)), k -> new boolean[REGION_PX * REGION_PX])[Math.floorMod(startI, REGION_PX) * REGION_PX + Math.floorMod(startJ, REGION_PX)] = true;
+        open.push(new int[]{startI, startJ});
+        while (true) {
+            while (!open.isEmpty()) {
+                int[] at = open.pop();
+                LakeCore core = cachedCore(pipeline, cores, Math.floorDiv(at[0], REGION_PX), Math.floorDiv(at[1], REGION_PX), blockM);
+                int ix = Math.floorMod(at[0], REGION_PX) * REGION_PX + Math.floorMod(at[1], REGION_PX);
+                bottom = Math.min(bottom, core.elev[ix]);
+                fed |= core.fed[ix];
+                cells++;
                 for (int k = 0; k < 8; k++) {
-                    int up = (r + cnr[k]) * GRID + (c + cnc[k]);
-                    if (!channel[up] || Float.isNaN(water[up])) continue;
-                    if (successor(down, up) != j) continue;
-                    lo = Math.min(lo, water[up]);
-                    hi = Math.max(hi, water[up]);
-                }
-
-                if (Math.round((hi - lo) / blockM) > 1) {
-                    if (fallDrop[j] >= FALL_MIN_DROP_BLOCKS || !Float.isNaN(lake[j])) {
-                        juncFall++;
-                    } else {
-                        juncStep++;
-                    }
-                }
-            }
-
-            float wLo = Float.MAX_VALUE, wHi = 0f, wSum = 0f;
-            float dLo = Float.MAX_VALUE, dHi = 0f, dSum = 0f;
-            int wN = 0;
-            for (int i = 0; i < GRID * GRID; i++) {
-                if (!channel[i] || elev[i] < 0f || widthM[i] <= 0f) continue;
-                wLo = Math.min(wLo, widthM[i]);
-                wHi = Math.max(wHi, widthM[i]);
-                wSum += widthM[i];
-                dLo = Math.min(dLo, depthM[i]);
-                dHi = Math.max(dHi, depthM[i]);
-                dSum += depthM[i];
-                wN++;
-            }
-            if (wN > 0) {
-                System.err.printf(
-                        "diag geometry: width %.0f/%.0f/%.0f m  depth %.1f/%.1f/%.1f m  (min/mean/max over %d cells)%n",
-                        wLo, wSum / wN, wHi, dLo, dSum / wN, dHi, wN);
-            }
-            System.err.printf(
-                    "diag solve: channel=%d spill=%d rise=%d (worst %.1fm) "
-                            + "step2+=%d falls=%d (worst %.0f blocks) junctions=%d over1block=%d atFallOrLake=%d%n",
-                    chan, spill, rises, worstRise, steps2, falls, worstFall,
-                    junc, juncStep, juncFall);
-        }
-        float[] waterOut = new float[GRID * GRID];
-        Arrays.fill(waterOut, Float.NaN);
-        float[] deltaW = new float[GRID * GRID];
-        float[] widthOut = new float[GRID * GRID];
-        float[] depthOut = new float[GRID * GRID];
-        float[] fallOut = new float[GRID * GRID];
-        Paint paint = new Paint(distance, magnitude, waterOut, deltaW,
-                widthOut, depthOut, fallOut);
-
-        float[] arcPos;
-        arcPos = new float[GRID * GRID];
-        Arrays.fill(arcPos, Float.NaN);
-        for (int i : chanUp) {
-            if (elev[i] < 0f) {
-                continue;
-            }
-            int d = successor(down, i);
-            float base = 0f;
-            float len = 0f;
-            if (d >= 0 && channel[d] && !Float.isNaN(arcPos[d])) {
-                base = arcPos[d];
-                float dr = (d / GRID) + offR[d] - ((i / GRID) + offR[i]);
-                float dc = (d % GRID) + offC[d] - ((i % GRID) + offC[i]);
-                len = (float) Math.sqrt(dr * dr + dc * dc);
-            }
-            arcPos[i] = base + len;
-        }
-        ARC_POS = arcPos;
-
-        phase("solveLevels");
-        meander(elev, channel, chanIdx, down, acc, water,
-                offR, offC, widthM, depthM, fallDrop, paint);
-        phase("meanderPaint");
-        chamfer(paint);
-
-        int active = 0;
-        int[] activeIdx;
-        {
-            int cap = 0;
-            for (int r = 1; r < GRID - 1; r++) {
-                for (int c = 1; c < GRID - 1; c++) {
-                    if (distance[r * GRID + c] < MAX_INFLUENCE_CELLS) {
-                        cap++;
-                    }
-                }
-            }
-            activeIdx = new int[cap];
-            for (int r = 1; r < GRID - 1; r++) {
-                for (int c = 1; c < GRID - 1; c++) {
-                    int i = r * GRID + c;
-                    if (distance[i] < MAX_INFLUENCE_CELLS) {
-                        activeIdx[active++] = i;
-                    }
-                }
-            }
-            if (Boolean.getBoolean("terradiff.diag")) {
-                System.err.printf("diag active cells: %d of %d (%.1f%%)%n",
-                        active, GRID * GRID, 100.0 * active / (GRID * GRID));
-            }
-        }
-
-        if (SECTION_STAMP) {
-            stampSections(chanUp, water, elev, offR, offC, widthM,
-                    perR, perC, distance, waterOut, blockM);
-        }
-
-        phase("chamfer");
-        if (FIELD_BLUR_PASSES > 0) {
-            float[] src = waterOut;
-            float[] dst = new float[GRID * GRID];
-            System.arraycopy(src, 0, dst, 0, GRID * GRID);
-            for (int pass = 0; pass < FIELD_BLUR_PASSES; pass++) {
-                for (int a = 0; a < active; a++) {
-                    int i = activeIdx[a];
-                    if (Float.isNaN(src[i])) {
+                    int ni = at[0] + V2_DR[k], nj = at[1] + V2_DC[k];
+                    int qi = Math.floorDiv(ni, REGION_PX), qj = Math.floorDiv(nj, REGION_PX);
+                    boolean[] mask = seen.computeIfAbsent(key(qi, qj), x -> new boolean[REGION_PX * REGION_PX]);
+                    int nx = Math.floorMod(ni, REGION_PX) * REGION_PX + Math.floorMod(nj, REGION_PX);
+                    if (mask[nx]) continue;
+                    LakeCore other = cachedCore(pipeline, cores, qi, qj, blockM);
+                    float e = other.elev[nx];
+                    if (e < 0f || other.barrier.contains(nx)) continue;
+                    if (!Float.isNaN(other.level[nx])) {
+                        if (Math.abs(other.level[nx] - level) <= 0.01f) joined = true;
                         continue;
                     }
-                    float sum = 0f;
-                    float wsum = 0f;
-                    for (int dr = -1; dr <= 1; dr++) {
-                        int base = i + dr * GRID;
-                        for (int dc = -1; dc <= 1; dc++) {
-                            float v = src[base + dc];
-                            if (Float.isNaN(v)) {
-                                continue;
-                            }
-                            sum += v;
-                            wsum += 1f;
-                        }
-                    }
-                    if (wsum > 0f) {
-                        dst[i] = sum / wsum;
-                    }
-                }
-                float[] swap = src;
-                src = dst;
-                dst = swap;
-            }
-            if (src != waterOut) {
-                System.arraycopy(src, 0, waterOut, 0, GRID * GRID);
-            }
-        }
-
-        phase("fieldBlur");
-        if (ARC_BLUR_PASSES > 0) {
-            float[] ps = paint.pos;
-            float[] pd = new float[GRID * GRID];
-            System.arraycopy(ps, 0, pd, 0, GRID * GRID);
-            for (int pass = 0; pass < ARC_BLUR_PASSES; pass++) {
-                for (int a = 0; a < active; a++) {
-                    int i = activeIdx[a];
-                    if (Float.isNaN(ps[i])) {
+                    if (!Float.isNaN(other.lake[nx])) {
+                        if (other.lake[nx] > level) level = other.lake[nx];
+                    } else if (e >= level) {
+                        shore.add(new float[]{e, ni, nj});
                         continue;
                     }
-                    float sum = 0f;
-                    int cnt = 0;
-                    for (int dr = -1; dr <= 1; dr++) {
-                        int base = i + dr * GRID;
-                        for (int dc = -1; dc <= 1; dc++) {
-                            float v = ps[base + dc];
-                            if (!Float.isNaN(v)) {
-                                sum += v;
-                                cnt++;
-                            }
-                        }
-                    }
-                    if (cnt > 0) {
-                        pd[i] = sum / cnt;
+                    if (cells < V2_LAKE_MAX_CELLS && seen.size() < V2_LAKE_MAX_REGIONS) {
+                        mask[nx] = true;
+                        open.push(new int[]{ni, nj});
                     }
                 }
-                float[] sw = ps; ps = pd; pd = sw;
             }
-            if (ps != paint.pos) {
-                System.arraycopy(ps, 0, paint.pos, 0, GRID * GRID);
-            }
-        }
-
-        int[] up = new int[GRID * GRID];
-        Arrays.fill(up, -1);
-        float[] bestAcc = new float[GRID * GRID];
-        phase("arcBlur");
-        for (int i : chanIdx) {
-            if (Float.isNaN(water[i])) {
+            float[] next = shore.poll();
+            if (next == null) break;
+            int si = (int) next[1], sj = (int) next[2];
+            int qi = Math.floorDiv(si, REGION_PX), qj = Math.floorDiv(sj, REGION_PX);
+            boolean[] mask = seen.get(key(qi, qj));
+            int sx = Math.floorMod(si, REGION_PX) * REGION_PX + Math.floorMod(sj, REGION_PX);
+            if (mask[sx]) continue;
+            if (next[0] < level) {
+                mask[sx] = true;
+                open.push(new int[]{si, sj});
                 continue;
             }
-            int d = successor(down, i);
-            if (d >= 0 && channel[d] && acc[i] > bestAcc[d]) {
-                bestAcc[d] = acc[i];
-                up[d] = i;
-            }
-        }
-
-        for (int ai = 0; ai < active; ai++) {
-            int k = activeIdx[ai];
-            int i = paint.src[k];
-            float target = paint.pos[k];
-            if (i >= 0 && !Float.isNaN(arcPos[i])) {
-
-                float kr = k / GRID, kc = k % GRID;
-                float ir = (i / GRID) + offR[i], ic = (i % GRID) + offC[i];
-                float best = Float.MAX_VALUE;
-                float bestArc = arcPos[i];
-                int dn = successor(down, i);
-                int upn = up[i];
-                for (int side = 0; side < 2; side++) {
-                    int j = side == 0 ? dn : upn;
-                    if (j < 0 || !channel[j] || Float.isNaN(arcPos[j])) {
-                        continue;
-                    }
-                    float jr = (j / GRID) + offR[j], jc = (j % GRID) + offC[j];
-                    float sr = jr - ir, sc = jc - ic;
-                    float len2 = sr * sr + sc * sc;
-                    if (len2 < 1.0e-6f) {
-                        continue;
-                    }
-                    float t = ((kr - ir) * sr + (kc - ic) * sc) / len2;
-                    t = Math.max(0f, Math.min(1f, t));
-                    float pr = ir + sr * t, pc = ic + sc * t;
-                    float d2 = (kr - pr) * (kr - pr) + (kc - pc) * (kc - pc);
-                    if (d2 < best) {
-                        best = d2;
-                        bestArc = arcPos[i] + (arcPos[j] - arcPos[i]) * t;
+            if (joined || !river && cells < V2_LAKE_OUTLET_CELLS || seen.size() >= V2_LAKE_MAX_REGIONS
+                    || next[0] > startLevel + V2_LAKE_CLIMB_M) break;
+            fed = fed || fedAcrossSeam(pipeline, seen, blockM);
+            if (!fed) break;
+            mask[sx] = true;
+            for (int k = 0; k < 8 && below == null; k++) {
+                int ni = si + V2_DR[k], nj = sj + V2_DC[k];
+                int ri = Math.floorDiv(ni, REGION_PX), rj = Math.floorDiv(nj, REGION_PX);
+                boolean[] other = seen.computeIfAbsent(key(ri, rj), x -> new boolean[REGION_PX * REGION_PX]);
+                int nx = Math.floorMod(ni, REGION_PX) * REGION_PX + Math.floorMod(nj, REGION_PX);
+                if (other[nx]) continue;
+                float e = cachedCore(pipeline, cores, ri, rj, blockM).elev[nx];
+                if (e >= level) continue;
+                java.util.List<int[]> lobe = e < 0f ? null : lobeBelow(pipeline, cores, seen, ni, nj, level, blockM);
+                if (lobe == null) {
+                    below = new int[]{ni, nj};
+                } else {
+                    for (int[] c : lobe) {
+                        seen.get(key(Math.floorDiv(c[0], REGION_PX), Math.floorDiv(c[1], REGION_PX)))[Math.floorMod(c[0], REGION_PX) * REGION_PX + Math.floorMod(c[1], REGION_PX)] = true;
+                        open.push(c);
                     }
                 }
-                if (best != Float.MAX_VALUE) {
-                    target = bestArc;
+            }
+            level = Math.max(level, next[0] - FREEBOARD_BLOCKS * blockM);
+            cells++;
+            if (below != null) {
+                for (int k = 0; k < 8; k++) {
+                    int ni = si + V2_DR[k], nj = sj + V2_DC[k];
+                    int ri = Math.floorDiv(ni, REGION_PX), rj = Math.floorDiv(nj, REGION_PX);
+                    boolean[] other = seen.computeIfAbsent(key(ri, rj), x -> new boolean[REGION_PX * REGION_PX]);
+                    int nx = Math.floorMod(ni, REGION_PX) * REGION_PX + Math.floorMod(nj, REGION_PX);
+                    LakeCore core = cachedCore(pipeline, cores, ri, rj, blockM);
+                    if (other[nx] || core.elev[nx] >= next[0]) continue;
+                    core.barrier.add(nx);
+                    pipeline.hydrology.finals.computeIfAbsent(key(ri, rj), x -> new LakeFinal()).barrier.add(nx);
+                }
+                break;
+            }
+            open.push(new int[]{si, sj});
+        }
+        float deep = level + FREEBOARD_BLOCKS * blockM - bottom;
+        for (Map.Entry<Long, boolean[]> e : seen.entrySet()) {
+            LakeCore core = cores.get(e.getKey());
+            if (core == null) continue;
+            boolean[] mask = e.getValue();
+            boolean any = false;
+            for (int ix = 0; ix < mask.length; ix++) {
+                if (mask[ix]) {
+                    core.level[ix] = level;
+                    core.deep[ix] = deep;
+                    any = true;
                 }
             }
-            if (i < 0 || Float.isNaN(target) || Float.isNaN(waterOut[k])
-                    || Float.isNaN(arcPos[i]) || distance[k] >= MAX_INFLUENCE_CELLS) {
-                continue;
-            }
-
-            int a = i;
-            int guard = 0;
-            if (target < arcPos[a]) {
-                while (guard++ < 96) {
-                    int d = successor(down, a);
-                    if (d < 0 || !channel[d] || Float.isNaN(arcPos[d]) || arcPos[d] <= target) {
-                        break;
-                    }
-                    a = d;
-                }
-                int d = successor(down, a);
-                if (d >= 0 && channel[d] && !Float.isNaN(arcPos[d]) && !Float.isNaN(water[d])) {
-                    float span = arcPos[a] - arcPos[d];
-                    float t = span > 1.0e-4f ? (arcPos[a] - target) / span : 0f;
-                    t = Math.max(0f, Math.min(1f, t));
-                    waterOut[k] = water[a] + (water[d] - water[a]) * t;
-                    continue;
-                }
-                waterOut[k] = water[a];
-            } else {
-                while (guard++ < 96) {
-                    int u = up[a];
-                    if (u < 0 || Float.isNaN(arcPos[u]) || arcPos[u] >= target) {
-                        break;
-                    }
-                    a = u;
-                }
-                int u = up[a];
-                if (u >= 0 && !Float.isNaN(arcPos[u]) && !Float.isNaN(water[u])) {
-                    float span = arcPos[u] - arcPos[a];
-                    float t = span > 1.0e-4f ? (target - arcPos[a]) / span : 0f;
-                    t = Math.max(0f, Math.min(1f, t));
-                    waterOut[k] = water[a] + (water[u] - water[a]) * t;
-                    continue;
-                }
-                waterOut[k] = water[a];
-            }
+            if (any) pipeline.hydrology.finals.computeIfAbsent(e.getKey(), k -> new LakeFinal()).add(mask, level, deep);
         }
-
-        phase("activeLoop");
-        if (FIELD_SMOOTH_PASSES > 0) {
-            float[] wSrc = widthOut, dSrc = depthOut;
-            float[] wDst = new float[GRID * GRID], dDst = new float[GRID * GRID];
-            System.arraycopy(wSrc, 0, wDst, 0, GRID * GRID);
-            System.arraycopy(dSrc, 0, dDst, 0, GRID * GRID);
-            for (int pass = 0; pass < FIELD_SMOOTH_PASSES; pass++) {
-                for (int a = 0; a < active; a++) {
-                    int i = activeIdx[a];
-                    float ws = 0f, ds = 0f;
-                    int n2 = 0;
-                    for (int dr = -1; dr <= 1; dr++) {
-                        int base = i + dr * GRID;
-                        for (int dc = -1; dc <= 1; dc++) {
-                            int j = base + dc;
-                            if (distance[j] >= MAX_INFLUENCE_CELLS) {
-                                continue;
-                            }
-                            ws += wSrc[j];
-                            ds += dSrc[j];
-                            n2++;
-                        }
-                    }
-                    if (n2 > 0) {
-                        wDst[i] = ws / n2;
-                        dDst[i] = ds / n2;
-                    }
-                }
-                float[] sw = wSrc; wSrc = wDst; wDst = sw;
-                float[] sd = dSrc; dSrc = dDst; dDst = sd;
-            }
-            if (wSrc != widthOut) {
-                System.arraycopy(wSrc, 0, widthOut, 0, GRID * GRID);
-                System.arraycopy(dSrc, 0, depthOut, 0, GRID * GRID);
-            }
-        }
-
-        if (EXACT_DISTANCE) {
-            float[] sq = new float[GRID * GRID];
-            for (int i = 0; i < GRID * GRID; i++) {
-                sq[i] = distance[i] == 0f ? 0f : 1.0e20f;
-            }
-        phase("fieldSmooth");
-            edt2d(sq, GRID, GRID);
-            for (int i = 0; i < GRID * GRID; i++) {
-                distance[i] = (float) Math.sqrt(sq[i]);
-            }
-        }
-
-        int capBound = 0;
-        for (int i = 0; i < GRID * GRID; i++) {
-            if (Float.isNaN(waterOut[i])) {
-                continue;
-            }
-            float cap = Math.max(0f, elev[i]);
-            if (waterOut[i] > cap) {
-                capBound++;
-
-                waterOut[i] = cap;
-            }
-        }
-
-        if (Boolean.getBoolean("terradiff.diag")) {
-            System.err.printf("diag groundCap: bound on %d cells%n", capBound);
-        }
-
-        for (int oi = chanUp.length - 1; oi >= 0; oi--) {
-            int i = chanUp[oi];
-            if (Float.isNaN(waterOut[i])) {
-                continue;
-            }
-            int d = successor(down, i);
-            if (d >= 0 && channel[d] && !Float.isNaN(waterOut[d]) && waterOut[d] > waterOut[i]) {
-                waterOut[d] = waterOut[i];
-            }
-        }
-
-        phase("edt+width");
-        if (FIELD_BLUR_PASSES > 0) {
-            float[] src2 = waterOut;
-            float[] dst2 = new float[GRID * GRID];
-            System.arraycopy(src2, 0, dst2, 0, GRID * GRID);
-            for (int pass = 0; pass < FIELD_BLUR_PASSES; pass++) {
-                for (int a2 = 0; a2 < active; a2++) {
-                    int i = activeIdx[a2];
-                    if (Float.isNaN(src2[i])) {
-                        continue;
-                    }
-                    float sum = 0f;
-                    int cnt = 0;
-                    for (int dr = -1; dr <= 1; dr++) {
-                        int base = i + dr * GRID;
-                        for (int dc = -1; dc <= 1; dc++) {
-                            float v = src2[base + dc];
-                            if (!Float.isNaN(v)) {
-                                sum += v;
-                                cnt++;
-                            }
-                        }
-                    }
-                    if (cnt > 0) {
-                        dst2[i] = sum / cnt;
-                    }
-                }
-                float[] sw2 = src2;
-                src2 = dst2;
-                dst2 = sw2;
-            }
-            if (src2 != waterOut) {
-                System.arraycopy(src2, 0, waterOut, 0, GRID * GRID);
-            }
-        }
-
-        phase("fieldBlur2");
-        KarstNetwork karst = KarstHydrology.solve(regionI, regionJ, windowI, windowJ, GRID,
-                elev, acc, channel, fillDepth, waterOut, lake, widthM, down, REGION_PX, MARGIN_PX, blockM);
-        phase("karst");
-        return new Region(regionI, regionJ, crop(distance), crop(magnitude), crop(waterOut),
-                crop(lake), crop(lakeDeep), crop(deltaW),
-                crop(widthOut), crop(depthOut), crop(fallOut), karst);
+        if (below != null) pushOutlet(pipeline, below[0], below[1], blockM);
     }
 
-    private static void stampSections(int[] chanUp, float[] water,
-                                      float[] elev, float[] offR, float[] offC, float[] widthM,
-                                      float[] perR, float[] perC, float[] distance,
-                                      float[] waterOut, float blockM) {
-
-            for (int oi = chanUp.length - 1; oi >= 0; oi--) {
-                int i = chanUp[oi];
-                if (Float.isNaN(water[i]) || elev[i] < 0f) {
-                    continue;
-                }
-                float r0 = (i / GRID) + offR[i], c0 = (i % GRID) + offC[i];
-
-                float drawnM = Math.max(widthM[i], STAMP_MIN_BLOCKS * blockM);
-                float halfCells = STAMP_REACH * 0.5f * drawnM / CELL_SIZE_M;
-
-                int steps = Math.max(1, (int) Math.ceil(halfCells * 4f));
-                float tanR = -perC[i], tanC = perR[i];
-                for (int s = -steps; s <= steps; s++) {
-                    float t = halfCells * s / steps;
-                    for (int u = -1; u <= 1; u++) {
-                    float ut = u * 0.5f;
-                    int rr = Math.round(r0 + perR[i] * t + tanR * ut);
-                    int cc = Math.round(c0 + perC[i] * t + tanC * ut);
-                    if (rr < 0 || cc < 0 || rr >= GRID || cc >= GRID) {
-                        continue;
-                    }
-                    int k = rr * GRID + cc;
-
-                    if (distance[k] < MAX_INFLUENCE_CELLS
-                            && (Float.isNaN(waterOut[k]) || water[i] >= waterOut[k] - blockM)) {
-                        waterOut[k] = water[i];
-                    }
-                    }
-                }
-            }
+    private static void pushOutlet(WorldPipeline pipeline, int startI, int startJ, float blockM) {
+        int ni = startI, nj = startJ;
+        for (int hop = 0; hop < V2_LAKE_WALK * 4; hop++) {
+            int oi = Math.floorDiv(ni, REGION_PX), oj = Math.floorDiv(nj, REGION_PX);
+            int ox = Math.floorMod(ni, REGION_PX) * REGION_PX + Math.floorMod(nj, REGION_PX);
+            LakeCore out = lakeCore(pipeline, oi, oj, blockM);
+            if (out.elev[ox] < 0f || out.outlets.contains(ox)) return;
+            out.outlets.add(ox);
+            out.feedFrom(ox);
+            pipeline.hydrology.finals.computeIfAbsent(key(oi, oj), k -> new LakeFinal()).outlets.add(ox);
+            RiverLink link = linkFor(pipeline, oi, oj, blockM);
+            int id = out.exitOf[ox];
+            if (id < 0) return;
+            if (!link.exitHigh[id]) pipeline.hydrology.outletEpoch++;
+            link.exitHigh[id] = true;
+            if (link.exitAcc[id] >= V2_LINK_MIN_ACC) return;
+            ni = link.landI[id];
+            nj = link.landJ[id];
+        }
     }
 
-    private static int[] strahlerOrder(float[] elev, boolean[] channel, int[] down,
-                                       int[] chanUp) {
-        int n = GRID * GRID;
+    private static float[] seamLoop(WorldPipeline pipeline, RiverLink from, int x, float blockM) {
+        Map<Long, Integer> seen = new java.util.HashMap<>();
+        float[] levels = new float[V2_LOOP_HOPS];
+        RiverLink at = from;
+        int here = x;
+        for (int hop = 0; hop < V2_LOOP_HOPS && here >= 0; hop++) {
+            long visit = (key(at.regionI, at.regionJ) * 1021L) ^ here;
+            Integer first = seen.putIfAbsent(visit, hop);
+            if (first != null) {
+                float top = -Float.MAX_VALUE;
+                for (int k = first; k < hop; k++) top = Math.max(top, levels[k]);
+                return new float[]{at.landI[here], at.landJ[here], top};
+            }
+            levels[hop] = at.exitLevel[here];
+            int li = at.landI[here], lj = at.landJ[here];
+            at = linkFor(pipeline, Math.floorDiv(li, REGION_PX), Math.floorDiv(lj, REGION_PX), blockM);
+            here = at.ringExit[ringIndex(Math.floorMod(li, REGION_PX), Math.floorMod(lj, REGION_PX))];
+        }
+        return null;
+    }
+
+    private static boolean fedAcrossSeam(WorldPipeline pipeline, Map<Long, boolean[]> seen, float blockM) {
+        for (Map.Entry<Long, boolean[]> e : seen.entrySet()) {
+            boolean[] mask = e.getValue();
+            boolean any = false;
+            for (int ix = 0; ix < mask.length && !any; ix++) any = mask[ix];
+            if (!any) continue;
+            int regionI = (int) (e.getKey() >> 32), regionJ = e.getKey().intValue();
+            RiverLink self = linkFor(pipeline, regionI, regionJ, blockM);
+            if (!self.riversHere) continue;
+            LakeCore core = lakeCore(pipeline, regionI, regionJ, blockM);
+            for (int nb = 0; nb < 9; nb++) {
+                if (nb == 4) continue;
+                RiverLink q = linkFor(pipeline, regionI + nb / 3 - 1, regionJ + nb % 3 - 1, blockM);
+                for (int y = 0; y < q.exits; y++) {
+                    int r = q.landI[y] - regionI * REGION_PX, c = q.landJ[y] - regionJ * REGION_PX;
+                    if (r < 0 || c < 0 || r >= REGION_PX || c >= REGION_PX) continue;
+                    if (q.exitAcc[y] < V2_LINK_MIN_ACC && !q.exitHigh[y]) continue;
+                    int at = r * REGION_PX + c;
+                    while (at >= 0 && !mask[at]) at = core.next[at];
+                    if (at >= 0 && exitKept(pipeline, q, y, V2_LINK_DEPTH - 1, blockM, new Walk(true)) != 0) return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static java.util.List<int[]> lobeBelow(WorldPipeline pipeline, Map<Long, LakeCore> cores, Map<Long, boolean[]> seen,
+                                                   int startI, int startJ, float level, float blockM) {
+        java.util.List<int[]> lobe = new java.util.ArrayList<>();
+        java.util.Set<Long> local = new java.util.HashSet<>();
+        java.util.ArrayDeque<int[]> open = new java.util.ArrayDeque<>();
+        local.add(key(startI, startJ));
+        open.add(new int[]{startI, startJ});
+        while (!open.isEmpty()) {
+            int[] at = open.poll();
+            lobe.add(at);
+            if (lobe.size() > V2_LAKE_PIT_CELLS) return null;
+            for (int k = 0; k < 8; k++) {
+                int ni = at[0] + V2_DR[k], nj = at[1] + V2_DC[k];
+                int ri = Math.floorDiv(ni, REGION_PX), rj = Math.floorDiv(nj, REGION_PX);
+                boolean[] mask = seen.computeIfAbsent(key(ri, rj), x -> new boolean[REGION_PX * REGION_PX]);
+                int nx = Math.floorMod(ni, REGION_PX) * REGION_PX + Math.floorMod(nj, REGION_PX);
+                if (mask[nx]) continue;
+                float e = cachedCore(pipeline, cores, ri, rj, blockM).elev[nx];
+                if (e < 0f) return null;
+                if (e < level && local.add(key(ni, nj))) open.add(new int[]{ni, nj});
+            }
+        }
+        return lobe;
+    }
+
+    private static LakeCore cachedCore(WorldPipeline pipeline, Map<Long, LakeCore> cores, int regionI, int regionJ, float blockM) {
+        long rk = key(regionI, regionJ);
+        LakeCore core = cores.get(rk);
+        if (core == null) {
+            core = lakeCore(pipeline, regionI, regionJ, blockM);
+            cores.put(rk, core);
+        }
+        return core;
+    }
+
+    private static void followToLake(WorldPipeline pipeline, RiverLink link, float blockM) {
+        for (int x = 0; x < link.exits; x++) {
+            if (link.exitAcc[x] < V2_LINK_MIN_ACC) continue;
+            RiverLink at = link;
+            int here = x;
+            for (int hop = 0; hop < V2_LAKE_WALK && here >= 0; hop++) {
+                int li = at.landI[here], lj = at.landJ[here];
+                int qi = Math.floorDiv(li, REGION_PX), qj = Math.floorDiv(lj, REGION_PX);
+                RiverLink q = linkFor(pipeline, qi, qj, blockM);
+                int lr = Math.floorMod(li, REGION_PX), lc = Math.floorMod(lj, REGION_PX);
+                int ring = ringIndex(lr, lc);
+                float known = q.ringLake[ring];
+                if (!Float.isNaN(known)) {
+                    seedCore(pipeline, qi, qj, blockM);
+                    LakeCore core = lakeCore(pipeline, qi, qj, blockM);
+                    int ix = lr * REGION_PX + lc;
+                    if (Float.isNaN(core.level[ix]) && core.elev[ix] < known) {
+                        floodLake(pipeline, li, lj, known, blockM);
+                    }
+                    break;
+                }
+                at = q;
+                here = q.ringExit[ring];
+            }
+        }
+    }
+
+    private static void markOutlets(LakeCore own, RiverLink link) {
+        for (int ix : own.outlets) {
+            if (own.exitOf[ix] >= 0) link.exitHigh[own.exitOf[ix]] = true;
+        }
+    }
+
+    private static void seedCore(WorldPipeline pipeline, int regionI, int regionJ, float blockM) {
+        LakeCore core = lakeCore(pipeline, regionI, regionJ, blockM);
+        if (core.seeded) return;
+        core.seeded = true;
+        for (int ix = 0; ix < core.lake.length; ix++) {
+            if (!Float.isNaN(core.lake[ix]) && Float.isNaN(core.level[ix]) && !core.firm[ix]) {
+                floodLake(pipeline, regionI * REGION_PX + ix / REGION_PX, regionJ * REGION_PX + ix % REGION_PX, core.lake[ix], blockM);
+            }
+        }
+    }
+
+    private static void agreeLakes(WorldPipeline pipeline, FlowView v, float blockM) {
+        int g = v.g, lo = v.margin - 1, hi = v.margin + REGION_PX + 1;
+        for (int r = lo; r < hi; r++) {
+            for (int c = lo; c < hi; c++) {
+                int i = r * g + c;
+                if (Float.isNaN(v.lake[i]) || v.firm[i]) continue;
+                int ni = v.windowI + r, nj = v.windowJ + c;
+                LakeCore core = lakeCore(pipeline, Math.floorDiv(ni, REGION_PX), Math.floorDiv(nj, REGION_PX), blockM);
+                if (Float.isNaN(core.level[Math.floorMod(ni, REGION_PX) * REGION_PX + Math.floorMod(nj, REGION_PX)])) {
+                    floodLake(pipeline, ni, nj, v.lake[i], blockM);
+                }
+            }
+        }
+        int nearLo = Math.max(0, v.margin - REGION_PX), nearHi = Math.min(g, v.margin + 2 * REGION_PX);
+        int near = 0;
+        for (int r = nearLo; r < nearHi; r++) {
+            for (int c = nearLo; c < nearHi; c++) {
+                if (r >= v.margin && c >= v.margin && r < v.margin + REGION_PX && c < v.margin + REGION_PX) continue;
+                if (Float.isNaN(v.lake[r * g + c]) || v.firm[r * g + c]) continue;
+                int dI = r < v.margin ? 0 : r < v.margin + REGION_PX ? 1 : 2, dJ = c < v.margin ? 0 : c < v.margin + REGION_PX ? 1 : 2;
+                near |= 1 << (dI * 3 + dJ);
+            }
+        }
+        for (int nb = 0; nb < 9; nb++) {
+            if ((near >> nb & 1) != 0) seedCore(pipeline, v.regionI + nb / 3 - 1, v.regionJ + nb % 3 - 1, blockM);
+        }
+        applyLakes(pipeline, v);
+    }
+
+    private static void applyLakes(WorldPipeline pipeline, FlowView v) {
+        Map<Long, LakeCore> lakes = pipeline.hydrology.lakes;
+        int g = v.g, cropLo = v.margin - CROP_RIM, cropHi = v.margin + REGION_PX + CROP_RIM;
+        for (int r = cropLo; r < cropHi; r++) {
+            for (int c = cropLo; c < cropHi; c++) {
+                int ni = v.windowI + r, nj = v.windowJ + c;
+                LakeCore core = lakes.get(key(Math.floorDiv(ni, REGION_PX), Math.floorDiv(nj, REGION_PX)));
+                if (core == null) continue;
+                int ix = Math.floorMod(ni, REGION_PX) * REGION_PX + Math.floorMod(nj, REGION_PX);
+                if (!Float.isNaN(core.level[ix])) {
+                    v.lake[r * g + c] = core.level[ix];
+                    v.lakeDeep[r * g + c] = core.deep[ix];
+                }
+            }
+        }
+    }
+
+    private static RiverLink linkFor(WorldPipeline pipeline, int regionI, int regionJ, float blockM) {
+        Map<Long, RiverLink> links = pipeline.hydrology.links;
+        RiverLink link = links.get(key(regionI, regionJ));
+        if (link == null) {
+            FlowView v = flowFor(pipeline, regionI, regionJ, blockM);
+            link = linkFrom(v, blockM);
+            links.put(key(regionI, regionJ), link);
+            if (v.high != null) {
+                markOutlets(lakeCore(pipeline, regionI, regionJ, blockM), link);
+            }
+        }
+        return link;
+    }
+
+    private static int ringIndex(int r, int c) {
+        if (r == 0) return c;
+        if (r == REGION_PX - 1) return REGION_PX + c;
+        if (c == 0) return 2 * REGION_PX + r;
+        return 3 * REGION_PX + r;
+    }
+
+    private static short[] exitOf(FlowView v) {
+        int g = v.g, lo = v.margin, hi = lo + REGION_PX;
+        short[] out = new short[REGION_PX * REGION_PX];
+        short exits = 0;
+        for (int k = 0; k < v.popped; k++) {
+            int i = v.order[k];
+            int r = i / g, c = i % g;
+            if (r < lo || c < lo || r >= hi || c >= hi) continue;
+            short id = -1;
+            int d = v.down[i];
+            if (d >= 0 && v.elev[d] >= 0f) {
+                int rd = d / g, cd = d % g;
+                id = rd >= lo && cd >= lo && rd < hi && cd < hi ? out[(rd - lo) * REGION_PX + cd - lo] : exits++;
+            }
+            out[(r - lo) * REGION_PX + c - lo] = id;
+        }
+        return out;
+    }
+
+    private static RiverLink linkFrom(FlowView v, float blockM) {
+        int g = v.g, lo = v.margin, hi = lo + REGION_PX;
+        float[] exitLevel = new float[4 * REGION_PX];
+        short[] exitOf = new short[REGION_PX * REGION_PX];
+        float[] pathLake = new float[REGION_PX * REGION_PX];
+        Arrays.fill(pathLake, Float.NaN);
+        int[] landI = new int[4 * REGION_PX], landJ = new int[4 * REGION_PX];
+        float[] exitAcc = new float[4 * REGION_PX];
+        boolean[] exitHigh = new boolean[4 * REGION_PX];
+        int exits = 0;
+        for (int k = 0; k < v.popped; k++) {
+            int i = v.order[k];
+            int r = i / g, c = i % g;
+            if (r < lo || c < lo || r >= hi || c >= hi) continue;
+            int id = -1;
+            int d = v.down[i];
+            if (d >= 0 && v.elev[d] >= 0f) {
+                int rd = d / g, cd = d % g;
+                if (rd >= lo && cd >= lo && rd < hi && cd < hi) {
+                    id = exitOf[(rd - lo) * REGION_PX + cd - lo];
+                    pathLake[(r - lo) * REGION_PX + c - lo] = pathLake[(rd - lo) * REGION_PX + cd - lo];
+                } else {
+                    id = exits++;
+                    landI[id] = v.windowI + rd;
+                    landJ[id] = v.windowJ + cd;
+                    exitAcc[id] = v.acc[i];
+                    exitHigh[id] = v.high != null && v.high[i];
+                    exitLevel[id] = !Float.isNaN(v.lake[i]) ? v.lake[i] : Math.max(0f, v.filled[i] - FREEBOARD_BLOCKS * blockM);
+                }
+            }
+            exitOf[(r - lo) * REGION_PX + c - lo] = (short) id;
+            if (!Float.isNaN(v.lake[i]) && !v.firm[i]) pathLake[(r - lo) * REGION_PX + c - lo] = v.lake[i];
+        }
+        short[] ringExit = new short[4 * REGION_PX];
+        float[] ringLake = new float[4 * REGION_PX];
+        int[] exitAsk = new int[exits];
+        for (int r = 0; r < REGION_PX; r++) {
+            for (int c = 0; c < REGION_PX; c++) {
+                if (r != 0 && c != 0 && r != REGION_PX - 1 && c != REGION_PX - 1) continue;
+                short id = exitOf[r * REGION_PX + c];
+                ringExit[ringIndex(r, c)] = id;
+                ringLake[ringIndex(r, c)] = pathLake[r * REGION_PX + c];
+                for (int k = 0; k < 8; k++) {
+                    int ur = lo + r + V2_DR[k], uc = lo + c + V2_DC[k];
+                    if (ur >= lo && uc >= lo && ur < hi && uc < hi) continue;
+                    int dI = ur < lo ? -1 : ur >= hi ? 1 : 0, dJ = uc < lo ? -1 : uc >= hi ? 1 : 0;
+                    if (id >= 0) exitAsk[id] |= 1 << ((dI + 1) * 3 + dJ + 1);
+                }
+            }
+        }
+        int near = 0;
+        int nearLo = Math.max(0, lo - REGION_PX), nearHi = Math.min(g, hi + REGION_PX);
+        for (int r = nearLo; r < nearHi; r++) {
+            for (int c = nearLo; c < nearHi; c++) {
+                int i = r * g + c;
+                if (Float.isNaN(v.lake[i]) || v.firm[i]) continue;
+                near |= 1 << ((r < lo ? 0 : r < hi ? 1 : 2) * 3 + (c < lo ? 0 : c < hi ? 1 : 2));
+            }
+        }
+        return new RiverLink(v.regionI, v.regionJ, v.riversHere, exits, Arrays.copyOf(landI, exits), Arrays.copyOf(landJ, exits),
+                Arrays.copyOf(exitAcc, exits), Arrays.copyOf(exitHigh, exits), Arrays.copyOf(exitLevel, exits), exitAsk, ringExit, ringLake, near);
+    }
+
+    private static final class Walk {
+        final java.util.HashSet<Long> visiting = new java.util.HashSet<>();
+        final boolean duringFlood;
+        boolean cycle;
+
+        Walk(boolean duringFlood) {
+            this.duringFlood = duringFlood;
+        }
+    }
+
+    private static int exitKept(WorldPipeline pipeline, RiverLink l, int x, int depth, float blockM, Walk walk) {
+        if (!walk.duringFlood && l.riversHere && !l.lakesSeen) {
+            l.lakesSeen = true;
+            for (int nb = 0; nb < 9; nb++) {
+                if ((l.nearLakes >> nb & 1) != 0) seedCore(pipeline, l.regionI + nb / 3 - 1, l.regionJ + nb % 3 - 1, blockM);
+            }
+            for (int y = 0; y < l.exits; y++) {
+                int li = l.landI[y], lj = l.landJ[y];
+                RiverLink q = linkFor(pipeline, Math.floorDiv(li, REGION_PX), Math.floorDiv(lj, REGION_PX), blockM);
+                if (!Float.isNaN(q.ringLake[ringIndex(Math.floorMod(li, REGION_PX), Math.floorMod(lj, REGION_PX))])) {
+                    seedCore(pipeline, q.regionI, q.regionJ, blockM);
+                }
+            }
+        }
+        if (l.epoch != pipeline.hydrology.outletEpoch) {
+            Arrays.fill(l.falseFrom, Integer.MAX_VALUE);
+            l.epoch = pipeline.hydrology.outletEpoch;
+        }
+        if (l.exitHigh[x]) return 2;
+        if (!l.riversHere || l.exitAsk[x] == 0) return 0;
+        if (depth >= l.falseFrom[x]) return 0;
+        if (l.trueExact[x]) return 2;
+        if (depth <= l.trueUpTo[x] || depth == 0) return 1;
+        long visit = (key(l.regionI, l.regionJ) * 1021L) ^ x;
+        if (!walk.visiting.add(visit)) {
+            walk.cycle = true;
+            return 0;
+        }
+        boolean cycleBefore = walk.cycle;
+        walk.cycle = false;
+        java.util.List<long[]> feeders = new java.util.ArrayList<>();
+        int i0 = l.regionI * REGION_PX, j0 = l.regionJ * REGION_PX;
+        for (int nb = 0; nb < 9; nb++) {
+            if ((l.exitAsk[x] >> nb & 1) == 0) continue;
+            int qi = l.regionI + nb / 3 - 1, qj = l.regionJ + nb % 3 - 1;
+            RiverLink q = linkFor(pipeline, qi, qj, blockM);
+            for (int y = 0; y < q.exits; y++) {
+                int r = q.landI[y] - i0, c = q.landJ[y] - j0;
+                if (r < 0 || c < 0 || r >= REGION_PX || c >= REGION_PX) continue;
+                if (q.exitAcc[y] < V2_LINK_MIN_ACC && !q.exitHigh[y]) continue;
+                if (l.ringExit[ringIndex(r, c)] == x) {
+                    feeders.add(new long[]{(long) -q.exitAcc[y], nb, y});
+                }
+            }
+        }
+        feeders.sort(Comparator.comparingLong(f -> f[0]));
+        int result = 0;
+        for (long[] f : feeders) {
+            int nb = (int) f[1];
+            RiverLink q = linkFor(pipeline, l.regionI + nb / 3 - 1, l.regionJ + nb % 3 - 1, blockM);
+            result = exitKept(pipeline, q, (int) f[2], depth - 1, blockM, walk);
+            if (result > 0) break;
+        }
+        walk.visiting.remove(visit);
+        if (result == 2) {
+            l.trueExact[x] = true;
+        } else if (result == 1) {
+            l.trueUpTo[x] = Math.max(l.trueUpTo[x], depth);
+        } else if (!walk.cycle && !walk.duringFlood) {
+            l.falseFrom[x] = Math.min(l.falseFrom[x], depth);
+        }
+        walk.cycle |= cycleBefore;
+        return result;
+    }
+
+    private static FlowView flowV2(WorldPipeline pipeline, int regionI, int regionJ, float blockM,
+                                   int margin, boolean force) {
+        int g = REGION_PX + 2 * margin;
+        int windowI = regionI * REGION_PX - margin;
+        int windowJ = regionJ * REGION_PX - margin;
+        int n = g * g;
+        float[] elev = pipeline.get(windowI, windowJ, windowI + g, windowJ + g, false)[0];
+        InfiniteTensor.throwIfCancelled();
+
+        float[] filled = elev.clone();
+        int[] down = new int[n];
+        Arrays.fill(down, -1);
+        int[] exit = new int[n];
         int[] order = new int[n];
-        int[] best = new int[n];
-        int[] ties = new int[n];
-
-        for (int oi = chanUp.length - 1; oi >= 0; oi--) {
-            int i = chanUp[oi];
-            if (elev[i] < 0f) {
-                continue;
-            }
-            int here = best[i] == 0 ? 1 : (ties[i] >= 2 ? best[i] + 1 : best[i]);
-            order[i] = here;
-            int d = successor(down, i);
-            if (d < 0 || !channel[d] || elev[d] < 0f) {
-                continue;
-            }
-            if (here > best[d]) {
-                best[d] = here;
-                ties[d] = 1;
-            } else if (here == best[d]) {
-                ties[d]++;
+        int popped = 0;
+        boolean[] closed = new boolean[n];
+        boolean[] border = new boolean[n];
+        LongHeap open = new LongHeap(n);
+        for (int i = 0; i < n; i++) {
+            int r = i / g, c = i % g;
+            border[i] = r == 0 || c == 0 || r == g - 1 || c == g - 1;
+            if (elev[i] < 0f || border[i]) {
+                closed[i] = true;
+                exit[i] = i;
+                open.push(pack(filled[i], i));
             }
         }
-        return order;
+        while (!open.isEmpty()) {
+            int i = (int) open.pop();
+            order[popped++] = i;
+            int r = i / g, c = i % g;
+            for (int k = 0; k < 8; k++) {
+                int rr = r + V2_DR[k], cc = c + V2_DC[k];
+                if (rr < 0 || cc < 0 || rr >= g || cc >= g) continue;
+                int j = rr * g + cc;
+                if (closed[j]) continue;
+                closed[j] = true;
+                down[j] = i;
+                exit[j] = exit[i];
+                if (filled[j] <= filled[i]) {
+                    filled[j] = filled[i] + FILL_EPSILON_M;
+                }
+                open.push(pack(filled[j], j));
+            }
+        }
+        InfiniteTensor.throwIfCancelled();
+
+        float[] acc = new float[n];
+        Arrays.fill(acc, 1f);
+        LatentRivers.Window latent = pipeline.latentRivers.forWindow(windowI, windowJ, g);
+        InflowSource source = INFLOW;
+        float[] inflow = source != null ? source.inflow(windowI, windowJ, g, elev)
+                : placeInflow(latent.crossings, elev, g, windowI, windowJ);
+        if (inflow != null) {
+            for (int i = 0; i < n; i++) acc[i] += inflow[i];
+        }
+        InfiniteTensor.throwIfCancelled();
+        for (int k = popped - 1; k >= 0; k--) {
+            int i = order[k];
+            if (down[i] >= 0) acc[down[i]] += acc[i];
+        }
+
+        boolean[] channel = new boolean[n];
+        for (int i = 0; i < n; i++) {
+            channel[i] = elev[i] >= 0f && !border[i] && acc[i] >= V2_CHANNEL_AREA;
+        }
+        int ringLo = margin, ringHi = margin + REGION_PX - 1;
+        boolean entered = false;
+        for (int r = ringLo; r <= ringHi; r++) {
+            for (int c = ringLo; c <= ringHi; c++) {
+                if (r != ringLo && r != ringHi && c != ringLo && c != ringHi) continue;
+                int i = r * g + c;
+                if (channel[i] || elev[i] < 0f || acc[i] < V2_SEAM_ENTRY * V2_CHANNEL_AREA) continue;
+                int main = -1;
+                for (int k = 0; k < 8; k++) {
+                    int u = (r + V2_DR[k]) * g + c + V2_DC[k];
+                    if (down[u] == i && (main < 0 || acc[u] > acc[main])) main = u;
+                }
+                if (main < 0) continue;
+                int ur = main / g, uc = main % g;
+                if (ur < ringLo || uc < ringLo || ur > ringHi || uc > ringHi) {
+                    channel[i] = true;
+                    entered = true;
+                }
+            }
+        }
+        if (entered) {
+            for (int k = popped - 1; k >= 0; k--) {
+                int i = order[k];
+                if (channel[i] && down[i] >= 0 && elev[down[i]] >= 0f) channel[down[i]] = true;
+            }
+        }
+        InfiniteTensor.throwIfCancelled();
+
+        float[] lake = new float[n];
+        float[] lakeDeep = new float[n];
+        boolean[] firm = new boolean[n];
+        Arrays.fill(lake, Float.NaN);
+        Arrays.fill(lakeDeep, Float.NaN);
+        int[] body = new int[n];
+        Arrays.fill(body, -1);
+        int[] stack = new int[n];
+        int[] members = new int[n];
+        int bodies = 0;
+        for (int seed = 0; seed < n; seed++) {
+            if (body[seed] != -1 || elev[seed] < 0f || filled[seed] - elev[seed] < V2_LAKE_MIN_DEPTH_M) continue;
+            int top = 0, size = 0;
+            stack[top++] = seed;
+            body[seed] = bodies;
+            float surface = Float.MAX_VALUE, bottom = Float.MAX_VALUE;
+            while (top > 0) {
+                int i = stack[--top];
+                members[size++] = i;
+                surface = Math.min(surface, filled[i]);
+                bottom = Math.min(bottom, elev[i]);
+                int r = i / g, c = i % g;
+                for (int k = 0; k < 8; k++) {
+                    int rr = r + V2_DR[k], cc = c + V2_DC[k];
+                    if (rr < 0 || cc < 0 || rr >= g || cc >= g) continue;
+                    int j = rr * g + cc;
+                    if (body[j] != -1 || elev[j] < 0f || filled[j] - elev[j] <= 0.05f) continue;
+                    body[j] = bodies;
+                    stack[top++] = j;
+                }
+            }
+            if (size >= V2_LAKE_MIN_CELLS) {
+                boolean spillsAway = true;
+                for (int m = 0; m < size && spillsAway; m++) {
+                    int i = members[m];
+                    spillsAway = !border[i] && (elev[exit[i]] < 0f || surface - elev[exit[i]] >= V2_ESCALATE_DROP_M);
+                }
+                for (int m = 0; m < size; m++) {
+                    lake[members[m]] = surface - FREEBOARD_BLOCKS * blockM;
+                    lakeDeep[members[m]] = surface - bottom;
+                    firm[members[m]] = spillsAway;
+                }
+            }
+            bodies++;
+        }
+        boolean outflows = false;
+        for (int i = 0; i < n; i++) {
+            if (Float.isNaN(lake[i])) continue;
+            int d = down[i];
+            if (d >= 0 && elev[d] >= 0f && Float.isNaN(lake[d]) && !channel[d]) {
+                channel[d] = true;
+                outflows = true;
+            }
+        }
+        if (outflows) {
+            for (int k = popped - 1; k >= 0; k--) {
+                int i = order[k];
+                if (channel[i] && down[i] >= 0 && elev[down[i]] >= 0f) channel[down[i]] = true;
+            }
+        }
+        boolean gated = V2_HEAD_MIN_M > Float.NEGATIVE_INFINITY;
+        boolean riversHere = !gated || pipeline.latentRivers.highZone(windowI, windowJ, g);
+        boolean[] high = null;
+        if (gated) {
+            high = new boolean[n];
+            for (int k = popped - 1; k >= 0; k--) {
+                int i = order[k];
+                if (acc[i] >= V2_CHANNEL_AREA && (channel[i] && elev[i] >= V2_HEAD_MIN_M || !Float.isNaN(lake[i]) && lake[i] >= V2_HEAD_MIN_M)) high[i] = true;
+                int d = down[i];
+                if (d >= 0 && high[i]) high[d] = true;
+            }
+            if (!riversHere) {
+                for (int i = 0; i < n; i++) {
+                    if (channel[i] && !high[i]) channel[i] = false;
+                }
+            }
+        }
+        if (!force) {
+            int lo = margin - CROP_RIM, hi = margin + REGION_PX + CROP_RIM;
+            int lg = g / RiverNetwork.LC;
+            float[] basin = null;
+            basin = new float[n];
+            for (int k = 0; k < popped; k++) {
+                int i = order[k];
+                int r = i / g, c = i % g;
+                boolean outer = r < V2_EDGE_CELLS || c < V2_EDGE_CELLS || r >= g - V2_EDGE_CELLS || c >= g - V2_EDGE_CELLS;
+                float here = outer ? latent.depth[(r / RiverNetwork.LC) * lg + c / RiverNetwork.LC] : 0f;
+                basin[i] = down[i] >= 0 ? Math.max(here, basin[down[i]]) : here;
+            }
+            boolean[] latentRiver = new boolean[n];
+            for (int lr = lo / RiverNetwork.LC; lr < (hi + RiverNetwork.LC - 1) / RiverNetwork.LC; lr++) {
+                for (int lc = lo / RiverNetwork.LC; lc < (hi + RiverNetwork.LC - 1) / RiverNetwork.LC; lc++) {
+                    if (latent.acc[lr * lg + lc] < V2_WATCH_AREA || !riversHere) continue;
+                    int lowest = -1;
+                    for (int dr = 0; dr < RiverNetwork.LC; dr++) {
+                        for (int dc = 0; dc < RiverNetwork.LC; dc++) {
+                            int k = (lr * RiverNetwork.LC + dr) * g + lc * RiverNetwork.LC + dc;
+                            if (elev[k] < 0f) continue;
+                            if (lowest < 0 || elev[k] < elev[lowest]) lowest = k;
+                        }
+                    }
+                    if (lowest >= 0) latentRiver[lowest] = true;
+                    float want = latent.own[lr * lg + lc];
+                    if (margin >= V2_MISSING_RIVER_MAX_MARGIN || want < V2_MISSING_RIVER_AREA
+                            || latent.outside[lr * lg + lc] < 0.5f * want) continue;
+                    float have = 0f;
+                    for (int r = Math.max(0, (lr - 1) * RiverNetwork.LC); r < Math.min(g, (lr + 2) * RiverNetwork.LC); r++) {
+                        for (int c = Math.max(0, (lc - 1) * RiverNetwork.LC); c < Math.min(g, (lc + 2) * RiverNetwork.LC); c++) {
+                            have = Math.max(have, acc[r * g + c]);
+                        }
+                    }
+                    if (have < V2_MISSING_RIVER_FRACTION * want) {
+                        return null;
+                    }
+                }
+            }
+            for (int r = lo; r < hi; r++) {
+                for (int c = lo; c < hi; c++) {
+                    int i = r * g + c;
+                    if (elev[i] < 0f || !channel[i] && (acc[i] < V2_WATCH_AREA || !riversHere) && !latentRiver[i]
+                            && filled[i] - elev[i] < V2_LAKE_MIN_DEPTH_M) continue;
+                    int x = exit[i];
+                    if (elev[x] < 0f) continue;
+                    float drop = filled[i] - elev[x];
+                    if (drop < V2_ESCALATE_DROP_M || basin != null && basin[i] > V2_ESCALATE_BASIN_M
+                            && drop < V2_BASIN_DROP_FACTOR * basin[i]) {
+                        return null;
+                    }
+                }
+            }
+        }
+
+        InfiniteTensor.throwIfCancelled();
+        return new FlowView(regionI, regionJ, margin, g, windowI, windowJ, popped, elev, filled, acc, lake, lakeDeep, down, order,
+                channel, high, firm, riversHere);
     }
 
-    private static float sampleGrid(float[] field, float rf, float cf) {
-        int r0 = (int) Math.floor(rf), c0 = (int) Math.floor(cf);
-        if (r0 < 0 || c0 < 0 || r0 >= GRID - 1 || c0 >= GRID - 1) {
-            return Float.NaN;
+    private static Region drawV2(WorldPipeline pipeline, FlowView v, RiverLink self, float blockM) {
+        agreeLakes(pipeline, v, blockM);
+        if (v.high != null && pipeline.latentRivers.bigBasin(v.windowI, v.windowJ, v.g)) {
+            followToLake(pipeline, self, blockM);
+            applyLakes(pipeline, v);
         }
-        float tr = rf - r0, tc = cf - c0;
-        int a = r0 * GRID + c0;
-        return lerp(lerp(field[a], field[a + 1], tc),
-                    lerp(field[a + GRID], field[a + GRID + 1], tc), tr);
+        int regionI = v.regionI, regionJ = v.regionJ, margin = v.margin, g = v.g, windowI = v.windowI, windowJ = v.windowJ;
+        int popped = v.popped, n = g * g;
+        float[] elev = v.elev, filled = v.filled, acc = v.acc, lake = v.lake, lakeDeep = v.lakeDeep;
+        int[] down = v.down, order = v.order;
+        boolean[] channel = v.channel;
+        float[] cap = null;
+        if (v.high != null) {
+            boolean[] high = v.high;
+            if (v.riversHere) {
+                float[] push = null;
+                for (int nb = 0; nb < 9; nb++) {
+                    if (nb == 4) continue;
+                    RiverLink q = linkFor(pipeline, regionI + nb / 3 - 1, regionJ + nb % 3 - 1, blockM);
+                    for (int y = 0; y < q.exits; y++) {
+                        int r = q.landI[y] - windowI, c = q.landJ[y] - windowJ;
+                        if (r < margin || c < margin || r >= margin + REGION_PX || c >= margin + REGION_PX) continue;
+                        if (q.exitAcc[y] < V2_LINK_MIN_ACC && !q.exitHigh[y]) continue;
+                        if (exitKept(pipeline, q, y, V2_LINK_DEPTH - 1, blockM, new Walk(false)) == 0) continue;
+                        int at = r * g + c;
+                        if (elev[at] < 0f) continue;
+                        if (push == null) {
+                            push = new float[n];
+                            cap = new float[n];
+                            Arrays.fill(cap, Float.MAX_VALUE);
+                        }
+                        push[at] = Math.max(push[at], q.exitAcc[y]);
+                        cap[at] = Math.min(cap[at], q.exitLevel[y]);
+                        short leaves = self.ringExit[ringIndex(r - margin, c - margin)];
+                        if (leaves >= 0 && !self.exitHigh[leaves]) {
+                            self.exitHigh[leaves] = true;
+                            pipeline.hydrology.outletEpoch++;
+                        }
+                        for (int step = 0; step <= CROP_RIM && at >= 0; step++) {
+                            high[at] = true;
+                            channel[at] = true;
+                            int best = -1, ar = at / g, ac = at % g;
+                            for (int k = 0; k < 8; k++) {
+                                int rr = ar + V2_DR[k], cc = ac + V2_DC[k];
+                                if (rr < 1 || cc < 1 || rr >= g - 1 || cc >= g - 1) continue;
+                                if (rr >= margin && cc >= margin && rr < margin + REGION_PX && cc < margin + REGION_PX) continue;
+                                int u = rr * g + cc;
+                                if (down[u] == at && (best < 0 || acc[u] > acc[best])) best = u;
+                            }
+                            at = best;
+                        }
+                    }
+                }
+                if (push != null) {
+                    float[] extra = new float[n];
+                    for (int k = popped - 1; k >= 0; k--) {
+                        int i = order[k];
+                        if (push[i] > acc[i] + extra[i]) extra[i] = push[i] - acc[i];
+                        int d = down[i];
+                        if (d < 0) continue;
+                        extra[d] += extra[i];
+                        if (high[i]) {
+                            high[d] = true;
+                            if (channel[i] && elev[d] >= 0f) channel[d] = true;
+                        }
+                    }
+                    for (int i = 0; i < n; i++) acc[i] += extra[i];
+                }
+                LakeCore own = lakeCore(pipeline, regionI, regionJ, blockM);
+                if (!own.outlets.isEmpty()) {
+                    for (int ix : own.outlets) {
+                        int at = (margin + ix / REGION_PX) * g + margin + ix % REGION_PX;
+                        high[at] = true;
+                        channel[at] = true;
+                    }
+                    for (int k = popped - 1; k >= 0; k--) {
+                        int i = order[k];
+                        int d = down[i];
+                        if (d >= 0 && high[i]) {
+                            high[d] = true;
+                            if (channel[i] && elev[d] >= 0f) channel[d] = true;
+                        }
+                    }
+                }
+                for (int x = 0; x < self.exits; x++) {
+                    if (self.exitAcc[x] < V2_LINK_MIN_ACC && !self.exitHigh[x]) continue;
+                    if (exitKept(pipeline, self, x, V2_LINK_DEPTH, blockM, new Walk(false)) == 0) continue;
+                    int qi = Math.floorDiv(self.landI[x], REGION_PX), qj = Math.floorDiv(self.landJ[x], REGION_PX);
+                    LakeCore core = lakeCore(pipeline, qi, qj, blockM);
+                    int ix = Math.floorMod(self.landI[x], REGION_PX) * REGION_PX + Math.floorMod(self.landJ[x], REGION_PX);
+                    if (Float.isNaN(core.level[ix]) && !Float.isNaN(core.lake[ix]) && !core.firm[ix]) {
+                        floodLake(pipeline, self.landI[x], self.landJ[x], core.lake[ix], blockM);
+                    }
+                    float[] loop = seamLoop(pipeline, self, x, blockM);
+                    if (loop == null) continue;
+                    int li = (int) loop[0], lj = (int) loop[1];
+                    LakeCore at = lakeCore(pipeline, Math.floorDiv(li, REGION_PX), Math.floorDiv(lj, REGION_PX), blockM);
+                    int lx = Math.floorMod(li, REGION_PX) * REGION_PX + Math.floorMod(lj, REGION_PX);
+                    if (!Float.isNaN(at.level[lx]) || loop[2] > at.elev[lx] + V2_LAKE_CLIMB_M) continue;
+                    floodLake(pipeline, li, lj, loop[2], blockM, true);
+                }
+                applyLakes(pipeline, v);
+            }
+            for (int i = 0; i < n; i++) {
+                if (channel[i] && !high[i]) channel[i] = false;
+            }
+        }
+        InfiniteTensor.throwIfCancelled();
+
+        float[] freeboard = riverFreeboard(channel, lake, down, order, popped);
+        float[] level = new float[n];
+        Arrays.fill(level, Float.NaN);
+        byte[] ord = new byte[n];
+        int[] mainUp = new int[n];
+        Arrays.fill(mainUp, -1);
+        for (int k = popped - 1; k >= 0; k--) {
+            int i = order[k];
+            if (!channel[i]) continue;
+            level[i] = !Float.isNaN(lake[i]) ? lake[i] : Math.max(0f, filled[i] - freeboard[i] * blockM);
+            if (ord[i] == 0) ord[i] = 1;
+            int d = down[i];
+            if (cap != null && cap[i] < Float.MAX_VALUE && Float.isNaN(lake[i])) {
+                level[i] = Math.min(level[i], Math.max(0f, cap[i]));
+                if (d >= 0 && channel[d]) cap[d] = Math.min(cap[d], level[i]);
+            }
+            if (d < 0 || !channel[d]) continue;
+            if (mainUp[d] < 0 || acc[i] > acc[mainUp[d]]) mainUp[d] = i;
+            if (ord[i] > ord[d]) {
+                ord[d] = ord[i];
+            } else if (ord[i] == ord[d] && ord[d] < 127) {
+                ord[d] = (byte) (ord[i] + 1);
+            }
+        }
+
+        float[] widthM = new float[n];
+        float[] depthM = new float[n];
+        float[] posR = new float[n];
+        float[] posC = new float[n];
+        float[] toSea = new float[n];
+        float[] mouth = new float[n];
+        Arrays.fill(toSea, Float.MAX_VALUE);
+        for (int k = 0; k < popped; k++) {
+            int i = order[k];
+            int d = down[i];
+            if (!channel[i] || d < 0) continue;
+            float step = d / g != i / g && d % g != i % g ? 1.4142135f : 1f;
+            if (elev[d] < 0f) {
+                toSea[i] = step;
+            } else if (channel[d] && toSea[d] < Float.MAX_VALUE) {
+                toSea[i] = toSea[d] + step;
+            }
+        }
+        for (int i = 0; i < n; i++) {
+            if (!channel[i]) continue;
+            double area = Math.max(1.0, acc[i] / RIVER_THRESHOLD);
+            double q = Math.pow(area, DISCHARGE_AREA_EXPONENT);
+            float w = BANKFULL_WIDTH_M * (float) Math.pow(q, WIDTH_Q_EXPONENT);
+            float dep = BANKFULL_DEPTH_M * (float) Math.pow(q, DEPTH_Q_EXPONENT);
+            w *= 1f + ORDER_WIDTH_GAIN * (ord[i] - 1);
+            w = MAX_WIDTH_M * w / (MAX_WIDTH_M + w);
+            float ramp = Math.max(0f, Math.min(1f, (float) (acc[i] / V2_WATCH_AREA - 1.0) / V2_WIDTH_RAMP));
+            w *= ramp * ramp * (3f - 2f * ramp);
+            dep = MAX_DEPTH_M * dep / (MAX_DEPTH_M + dep);
+            int r = i / g, c = i % g;
+            int d = down[i];
+            if (d >= 0) {
+                float fr = d / g - r, fc = d % g - c;
+                float len = (float) Math.sqrt(fr * fr + fc * fc);
+                float floorM = valleyFloorV2(elev, g, r, c, -fc / len, fr / len);
+                w = Math.min(w, CONFINEMENT_FRACTION * floorM);
+            }
+            widthM[i] = Math.max(CELL_SIZE_M * 0.25f, w);
+            depthM[i] = Math.max(0.5f, dep);
+            if (toSea[i] < Float.MAX_VALUE) {
+                float reach = Math.max(V2_MOUTH_CELLS, V2_MOUTH_WIDTHS * widthM[i] / CELL_SIZE_M);
+                float t = Math.max(0f, 1f - toSea[i] / reach);
+                t = t * t * (3f - 2f * t);
+                mouth[i] = t;
+                widthM[i] *= 1f + (V2_MOUTH_FLARE - 1f) * t;
+                depthM[i] += (V2_MOUTH_DEPTH_BLOCKS * blockM - depthM[i]) * t;
+            }
+
+            if (mainUp[i] < 0) {
+                posR[i] = r;
+                posC[i] = c;
+                for (int k = 0; k < 8; k++) {
+                    int rr = r + V2_DR[k], cc = c + V2_DC[k];
+                    if (rr < 0 || cc < 0 || rr >= g || cc >= g) continue;
+                    int u = rr * g + cc;
+                    if (down[u] == i && !Float.isNaN(lake[u])) {
+                        posR[i] = rr;
+                        posC[i] = cc;
+                        break;
+                    }
+                }
+                continue;
+            }
+            float sr = r, sc = c;
+            int cnt = 1;
+            int at = i;
+            for (int s2 = 0; s2 < V2_SMOOTH_CELLS; s2++) {
+                at = down[at];
+                if (at < 0 || !channel[at]) break;
+                sr += at / g;
+                sc += at % g;
+                cnt++;
+            }
+            at = i;
+            for (int s2 = 0; s2 < V2_SMOOTH_CELLS; s2++) {
+                at = mainUp[at];
+                if (at < 0) break;
+                sr += at / g;
+                sc += at % g;
+                cnt++;
+            }
+            posR[i] = sr / cnt;
+            posC[i] = sc / cnt;
+        }
+        for (int pass = 0; pass < V2_WIDTH_SMOOTH; pass++) {
+            float[] next = widthM.clone();
+            for (int i = 0; i < n; i++) {
+                if (!channel[i]) continue;
+                float sum = widthM[i];
+                int cnt = 1;
+                int d = down[i];
+                if (d >= 0 && channel[d]) {
+                    sum += widthM[d];
+                    cnt++;
+                }
+                if (mainUp[i] >= 0) {
+                    sum += widthM[mainUp[i]];
+                    cnt++;
+                }
+                next[i] = sum / cnt;
+            }
+            widthM = next;
+        }
+        InfiniteTensor.throwIfCancelled();
+
+        int[] src = new int[n];
+        float[] dist = new float[n];
+        Arrays.fill(src, -1);
+        Arrays.fill(dist, Float.MAX_VALUE);
+        float[] endR = new float[n];
+        float[] endC = new float[n];
+        for (int i = 0; i < n; i++) {
+            if (!channel[i]) continue;
+            int d = down[i];
+            if (d >= 0 && channel[d]) {
+                endR[i] = posR[d];
+                endC[i] = posC[d];
+            } else if (d >= 0 && elev[d] < 0f) {
+                endR[i] = d / g;
+                endC[i] = d % g;
+            } else {
+                endR[i] = posR[i];
+                endC[i] = posC[i];
+            }
+        }
+        for (int i = 0; i < n; i++) {
+            if (!channel[i]) continue;
+            src[i] = i;
+            dist[i] = segmentDistance(i / g, i % g, posR[i], posC[i], endR[i], endC[i]);
+        }
+        for (int pass = 0; pass < 2; pass++) {
+            boolean fwd = pass == 0;
+            for (int t = 0; t < n; t++) {
+                int i = fwd ? t : n - 1 - t;
+                if (channel[i]) continue;
+                int r = i / g, c = i % g;
+                for (int k = 0; k < 4; k++) {
+                    int rr = r + (fwd ? V2_FR[k] : -V2_FR[k]), cc = c + (fwd ? V2_FC[k] : -V2_FC[k]);
+                    if (rr < 0 || cc < 0 || rr >= g || cc >= g) continue;
+                    int s2 = src[rr * g + cc];
+                    if (s2 < 0 || s2 == src[i]) continue;
+                    float dd = segmentDistance(r, c, posR[s2], posC[s2], endR[s2], endC[s2]);
+                    if (dd < dist[i]) {
+                        dist[i] = dd;
+                        src[i] = s2;
+                    }
+                }
+            }
+        }
+
+        float[] distance = new float[n];
+        float[] magnitude = new float[n];
+        float[] water = new float[n];
+        float[] width = new float[n];
+        float[] depth = new float[n];
+        float[] delta = new float[n];
+        float[] zero = new float[n];
+        Arrays.fill(water, Float.NaN);
+        int off = margin - CROP_RIM;
+        float[] segments = new float[SEGMENT_FIELDS * CROP_N * CROP_N];
+        Arrays.fill(segments, Float.NaN);
+        for (int i = 0; i < n; i++) {
+            int s2 = src[i];
+            if (s2 < 0) {
+                distance[i] = Float.MAX_VALUE;
+                continue;
+            }
+            int cr = i / g - off, cc = i % g - off;
+            if (cr >= 0 && cc >= 0 && cr < CROP_N && cc < CROP_N) {
+                int o = SEGMENT_FIELDS * (cr * CROP_N + cc);
+                int ds = down[s2];
+                boolean next = ds >= 0 && channel[ds];
+                segments[o] = posR[s2] - off;
+                segments[o + 1] = posC[s2] - off;
+                segments[o + 2] = endR[s2] - off;
+                segments[o + 3] = endC[s2] - off;
+                segments[o + 4] = next ? endR[ds] - off : endR[s2] - off;
+                segments[o + 5] = next ? endC[ds] - off : endC[s2] - off;
+                segments[o + 6] = level[s2];
+                segments[o + 7] = segmentEndLevel(s2, down, channel, elev, level);
+                segments[o + 8] = next ? segmentEndLevel(ds, down, channel, elev, level) : segments[o + 7];
+            }
+            distance[i] = dist[i];
+            magnitude[i] = 1f;
+            water[i] = level[s2];
+            width[i] = widthM[s2];
+            depth[i] = depthM[s2];
+            delta[i] = mouth[s2];
+        }
+        for (int s2 = 0; s2 < n; s2++) {
+            if (!channel[s2]) continue;
+            float rad = 0.5f * widthM[s2] / CELL_SIZE_M + 1f;
+            int r0 = (int) Math.floor(Math.min(posR[s2], endR[s2]) - rad), r1 = (int) Math.ceil(Math.max(posR[s2], endR[s2]) + rad);
+            int c0 = (int) Math.floor(Math.min(posC[s2], endC[s2]) - rad), c1 = (int) Math.ceil(Math.max(posC[s2], endC[s2]) + rad);
+            for (int r = Math.max(0, r0); r <= Math.min(g - 1, r1); r++) {
+                for (int c = Math.max(0, c0); c <= Math.min(g - 1, c1); c++) {
+                    if (segmentDistance(r, c, posR[s2], posC[s2], endR[s2], endC[s2]) > rad) continue;
+                    int i = r * g + c;
+                    if (Float.isNaN(water[i]) || level[s2] < water[i]) water[i] = level[s2];
+                }
+            }
+        }
+        InfiniteTensor.throwIfCancelled();
+        float[] lakeFlow = lakeFlowV2(elev, lake, down, channel, widthM, level, posR, posC, endR, endC, g, margin);
+        InfiniteTensor.throwIfCancelled();
+
+        float[] fillDepth = new float[n];
+        for (int i = 0; i < n; i++) fillDepth[i] = filled[i] - elev[i];
+        KarstNetwork karst = KarstHydrology.solve(regionI, regionJ, windowI, windowJ, g,
+                elev, acc, channel, fillDepth, water, lake, widthM, down, REGION_PX, margin, blockM);
+        InfiniteTensor.throwIfCancelled();
+        Region region = new Region(regionI, regionJ, cropV2(distance, g, margin), cropV2(magnitude, g, margin),
+                cropV2(water, g, margin), cropV2(lake, g, margin), cropV2(lakeDeep, g, margin),
+                cropV2(delta, g, margin), cropV2(width, g, margin), cropV2(depth, g, margin),
+                cropV2(zero, g, margin), karst);
+        region.segments = segments;
+        region.lakeFlow = lakeFlow;
+        return region;
     }
 
-    private static float valleyFloorM(float[] elev, float r0, float c0, float perpR, float perpC) {
-        float base = sampleGrid(elev, r0, c0);
-        if (Float.isNaN(base)) {
-            return CELL_SIZE_M;
+    // Streams speed of a river leaving cell d, from the fall of its water level
+    private static float riverSpeedV2(int d, int[] down, boolean[] channel, float[] level, int g) {
+        if (d < 0 || !channel[d] || Float.isNaN(level[d])) return RIVER_MIN_SPEED;
+        int dd = down[d];
+        if (dd < 0 || !channel[dd] || Float.isNaN(level[dd])) return RIVER_MIN_SPEED;
+        float step = dd / g != d / g && dd % g != d % g ? 1.4142135f : 1f;
+        return riverSpeed(Math.max(0f, level[d] - level[dd]) / (step * CELL_SIZE_M));
+    }
+
+    // Streams speed of river water on a channel of this slope
+    public static float riverSpeed(float slope) {
+        return Math.max(RIVER_MIN_SPEED, Math.min(RIVER_MAX_SPEED, 0.45f + 2.2f * (float) Math.sqrt(Math.max(0f, slope))));
+    }
+
+    // Current through each lake that drains, toward its outflow, as direction and Streams speed per crop cell
+    private static float[] lakeFlowV2(float[] elev, float[] lake, int[] down, boolean[] channel, float[] widthM,
+                                      float[] level, float[] posR, float[] posC, float[] endR, float[] endC, int g, int margin) {
+        int n = g * g;
+        float[] dist = new float[n];
+        Arrays.fill(dist, Float.MAX_VALUE);
+        int[] parent = new int[n], root = new int[n];
+        Arrays.fill(parent, -1);
+        Arrays.fill(root, -1);
+        float[] exitSpeed = new float[n], exitWidth = new float[n];
+        LongHeap heap = new LongHeap(4096);
+        boolean any = false;
+        for (int u = 0; u < n; u++) {
+            if (Float.isNaN(lake[u])) continue;
+            int d = down[u];
+            if (d < 0) continue;
+            boolean leaves = Float.isNaN(lake[d]) ? channel[d] || elev[d] < 0f : lake[d] < lake[u];
+            if (!leaves) continue;
+            dist[u] = 0f;
+            root[u] = u;
+            parent[u] = d;
+            exitSpeed[u] = riverSpeedV2(d, down, channel, level, g);
+            exitWidth[u] = channel[d] ? Math.max(1f, widthM[d] / CELL_SIZE_M) : 2f;
+            heap.push(pack(0f, u));
+            any = true;
         }
+        if (!any) return null;
+        while (!heap.isEmpty()) {
+            long top = heap.pop();
+            int i = (int) top;
+            if (Float.intBitsToFloat((int) (top >>> 32)) > dist[i]) continue;
+            int r = i / g, c = i % g;
+            for (int k = 0; k < 8; k++) {
+                int rr = r + V2_DR[k], cc = c + V2_DC[k];
+                if (rr < 0 || cc < 0 || rr >= g || cc >= g) continue;
+                int j = rr * g + cc;
+                if (Float.isNaN(lake[j]) || lake[j] != lake[i]) continue;
+                float nd = dist[i] + (V2_DR[k] != 0 && V2_DC[k] != 0 ? 1.4142135f : 1f);
+                if (nd >= dist[j]) continue;
+                dist[j] = nd;
+                parent[j] = i;
+                root[j] = root[i];
+                heap.push(pack(nd, j));
+            }
+        }
+
+        Map<Integer, int[]> bands = new java.util.HashMap<>();
+        for (int i = 0; i < n; i++) {
+            if (root[i] < 0) continue;
+            int b = (int) dist[i];
+            int[] cnt = bands.get(root[i]);
+            if (cnt == null || b >= cnt.length) {
+                cnt = cnt == null ? new int[Math.max(64, b + 1)] : Arrays.copyOf(cnt, Math.max(b + 1, cnt.length * 2));
+                bands.put(root[i], cnt);
+            }
+            cnt[b]++;
+        }
+
+        float[] vr = new float[n], vc = new float[n], speed = new float[n];
+        for (int i = 0; i < n; i++) {
+            if (root[i] < 0) continue;
+            int at = i;
+            for (int s = 0; s < LAKE_TANGENT_CELLS && parent[at] >= 0; s++) at = parent[at];
+            float dr = at / g - i / g, dc = at % g - i % g;
+            float len = (float) Math.sqrt(dr * dr + dc * dc);
+            if (len > 0f) {
+                vr[i] = dr / len;
+                vc[i] = dc / len;
+            }
+            int[] cnt = bands.get(root[i]);
+            int b = (int) dist[i];
+            float w = cnt[b];
+            if (b > 0) w = (w + cnt[b - 1]) * 0.5f;
+            float vOut = exitSpeed[root[i]], wOut = exitWidth[root[i]];
+            float body = Math.max(LAKE_MIN_SPEED, Math.min(LAKE_BODY_SPEED, vOut * wOut / Math.max(wOut, w)));
+            float funnel = LAKE_FUNNEL_CELLS + 2f * wOut;
+            float t = Math.max(0f, 1f - dist[i] / funnel);
+            t = t * t * (3f - 2f * t);
+            speed[i] = body + (Math.max(body, vOut) - body) * t;
+        }
+
+        int[] inlet = new int[n];
+        float[] reach = new float[n];
+        Arrays.fill(inlet, -1);
+        int[] queue = new int[n];
+        int head = 0, tail = 0;
+        for (int c0 = 0; c0 < n; c0++) {
+            if (!channel[c0] || !Float.isNaN(lake[c0])) continue;
+            int j = down[c0];
+            if (j < 0 || root[j] < 0 || inlet[j] >= 0) continue;
+            inlet[j] = c0;
+            reach[j] = 0f;
+            queue[tail++] = j;
+        }
+        while (head < tail) {
+            int i = queue[head++];
+            int src = inlet[i];
+            float radius = LAKE_PLUME_CELLS + 1.5f * Math.max(1f, widthM[src] / CELL_SIZE_M);
+            float w = 1f - reach[i] / radius;
+            w *= w;
+            float rr0 = endR[src] - posR[src], cc0 = endC[src] - posC[src];
+            float rl = (float) Math.sqrt(rr0 * rr0 + cc0 * cc0);
+            if (rl > 0f) {
+                float br = vr[i] * (1f - w) + rr0 / rl * w, bc = vc[i] * (1f - w) + cc0 / rl * w;
+                float bl = (float) Math.sqrt(br * br + bc * bc);
+                if (bl > 1.0e-3f) {
+                    vr[i] = br / bl;
+                    vc[i] = bc / bl;
+                }
+            }
+            speed[i] = Math.max(speed[i], speed[i] * (1f - w) + riverSpeedV2(src, down, channel, level, g) * LAKE_PLUME_KEEP * w);
+            int r = i / g, c = i % g;
+            for (int k = 0; k < 8; k += 1) {
+                if (V2_DR[k] != 0 && V2_DC[k] != 0) continue;
+                int rr = r + V2_DR[k], cc = c + V2_DC[k];
+                if (rr < 0 || cc < 0 || rr >= g || cc >= g) continue;
+                int j = rr * g + cc;
+                if (root[j] < 0 || inlet[j] >= 0 || lake[j] != lake[i] || reach[i] + 1f >= radius) continue;
+                inlet[j] = src;
+                reach[j] = reach[i] + 1f;
+                queue[tail++] = j;
+            }
+        }
+
+        int off = margin - CROP_RIM;
+        float[] out = new float[3 * CROP_N * CROP_N];
+        Arrays.fill(out, Float.NaN);
+        for (int cr = 0; cr < CROP_N; cr++) {
+            for (int cc = 0; cc < CROP_N; cc++) {
+                int i = (cr + off) * g + cc + off;
+                if (root[i] < 0) continue;
+                float sr = 0f, sc = 0f;
+                int r = i / g, c = i % g;
+                for (int dr = -1; dr <= 1; dr++) {
+                    for (int dc = -1; dc <= 1; dc++) {
+                        int rr = r + dr, cl = c + dc;
+                        if (rr < 0 || cl < 0 || rr >= g || cl >= g) continue;
+                        int j = rr * g + cl;
+                        if (root[j] != root[i]) continue;
+                        sr += vr[j];
+                        sc += vc[j];
+                    }
+                }
+                float sl = (float) Math.sqrt(sr * sr + sc * sc);
+                if (sl < 1.0e-3f) continue;
+                int o = 3 * (cr * CROP_N + cc);
+                out[o] = sr / sl;
+                out[o + 1] = sc / sl;
+                out[o + 2] = speed[i];
+            }
+        }
+        return out;
+    }
+
+    // Lake current at a native position as row and column direction and Streams speed; false where the water is still
+    public static boolean sampleLakeFlow(WorldPipeline pipeline, float nativeI, float nativeJ, float blockM, float[] out) {
+        int ri = Math.floorDiv((int) Math.floor(nativeI), REGION_PX);
+        int rj = Math.floorDiv((int) Math.floor(nativeJ), REGION_PX);
+        Region region = regionFor(pipeline, ri, rj, blockM);
+        if (region == null || region.lakeFlow == null) return false;
+        float gi = nativeI - (ri * REGION_PX - MARGIN_PX) - CROP_OFF - 0.5f;
+        float gj = nativeJ - (rj * REGION_PX - MARGIN_PX) - CROP_OFF - 0.5f;
+        int i0 = (int) Math.floor(gi), j0 = (int) Math.floor(gj);
+        if (i0 < 0 || j0 < 0 || i0 >= CROP_N - 1 || j0 >= CROP_N - 1) return false;
+        float ti = gi - i0, tj = gj - j0;
+        float sr = 0f, sc = 0f, sv = 0f, sw = 0f;
+        for (int k = 0; k < 4; k++) {
+            int a = (i0 + (k >> 1)) * CROP_N + j0 + (k & 1);
+            float w = ((k >> 1) == 1 ? ti : 1f - ti) * ((k & 1) == 1 ? tj : 1f - tj);
+            int o = 3 * a;
+            if (Float.isNaN(region.lakeFlow[o]) || w <= 0f) continue;
+            sr += region.lakeFlow[o] * w;
+            sc += region.lakeFlow[o + 1] * w;
+            sv += region.lakeFlow[o + 2] * w;
+            sw += w;
+        }
+        if (sw < 0.2f) return false;
+        float len = (float) Math.sqrt(sr * sr + sc * sc);
+        if (len < 1.0e-4f) return false;
+        out[0] = sr / len;
+        out[1] = sc / len;
+        out[2] = sv / sw;
+        return true;
+    }
+
+    private static float[] riverFreeboard(boolean[] channel, float[] lake, int[] down, int[] order, int popped) {
+        float[] fb = new float[channel.length];
+        Arrays.fill(fb, V2_RIVER_FREEBOARD_BLOCKS);
+        for (int k = popped - 1; k >= 0; k--) {
+            int i = order[k], d = down[i];
+            if (!channel[i] || d < 0 || !channel[d]) continue;
+            fb[d] = Math.min(fb[d], (Float.isNaN(lake[i]) ? fb[i] : FREEBOARD_BLOCKS) + V2_FREEBOARD_RAMP);
+        }
+        for (int k = 0; k < popped; k++) {
+            int i = order[k], d = down[i];
+            if (!channel[i] || d < 0 || !channel[d]) continue;
+            fb[i] = Math.min(fb[i], (Float.isNaN(lake[d]) ? fb[d] : FREEBOARD_BLOCKS) + V2_FREEBOARD_RAMP);
+        }
+        return fb;
+    }
+
+    private static float[] cropV2(float[] full, int g, int margin) {
+        float[] out = new float[CROP_N * CROP_N];
+        int off = margin - CROP_RIM;
+        for (int r = 0; r < CROP_N; r++) {
+            System.arraycopy(full, (off + r) * g + off, out, r * CROP_N, CROP_N);
+        }
+        return out;
+    }
+
+    private static final int SEGMENT_FIELDS = 9;
+
+    // Blocks a river surface is held below the ground of its own cell; lakes keep FREEBOARD_BLOCKS
+    private static final float V2_RIVER_FREEBOARD_BLOCKS = 1.5f;
+
+    // Blocks of freeboard a river gains per native cell away from a lake
+    private static final float V2_FREEBOARD_RAMP = 0.125f;
+
+    // Water slope above which a segment drops as one fall at its head
+    private static final float V2_FALL_SLOPE = 0.6f;
+
+    private static float segmentEndLevel(int s, int[] down, boolean[] channel, float[] elev, float[] level) {
+        int d = down[s];
+        return d >= 0 && channel[d] ? level[d] : d >= 0 && elev[d] < 0f ? 0f : level[s];
+    }
+
+    private static float[] placeInflow(float[] crossings, float[] elev, int g, int windowI, int windowJ) {
+        if (crossings.length == 0) {
+            return null;
+        }
+        int lc = RiverNetwork.LC;
+        float[] inflow = new float[g * g];
+        for (int k = 0; k + 4 < crossings.length; k += 5) {
+            int pi = (int) crossings[k + 2], pj = (int) crossings[k + 3];
+            int best = -1;
+            for (int dr = 0; dr < lc; dr++) {
+                for (int dc = 0; dc < lc; dc++) {
+                    int r = pi * lc + dr - windowI, c = pj * lc + dc - windowJ;
+                    if (r < 1 || c < 1 || r >= g - 1 || c >= g - 1) continue;
+                    int i = r * g + c;
+                    if (elev[i] < 0f) continue;
+                    if (best < 0 || elev[i] < elev[best]) best = i;
+                }
+            }
+            if (best >= 0) {
+                inflow[best] += crossings[k + 4];
+            }
+        }
+        return inflow;
+    }
+
+    private static float segmentDistance(float r, float c, float ar, float ac, float br, float bc) {
+        float vr = br - ar, vc = bc - ac;
+        float len2 = vr * vr + vc * vc;
+        float t = len2 > 1.0e-6f ? Math.max(0f, Math.min(1f, ((r - ar) * vr + (c - ac) * vc) / len2)) : 0f;
+        float dr = r - (ar + t * vr), dc = c - (ac + t * vc);
+        return (float) Math.sqrt(dr * dr + dc * dc);
+    }
+
+    private static float valleyFloorV2(float[] elev, int g, int r0, int c0, float perpR, float perpC) {
+        float base = elev[r0 * g + c0];
         int cells = 0;
         for (int side = -1; side <= 1; side += 2) {
             for (int s = 1; s <= CONFINEMENT_SCAN_CELLS; s++) {
-                float g = sampleGrid(elev, r0 + perpR * s * side, c0 + perpC * s * side);
-                if (Float.isNaN(g) || g > base + CONFINEMENT_RISE_M) {
+                int r = Math.round(r0 + perpR * s * side), c = Math.round(c0 + perpC * s * side);
+                if (r < 0 || c < 0 || r >= g || c >= g || elev[r * g + c] > base + CONFINEMENT_RISE_M) {
                     break;
                 }
                 cells++;
@@ -1668,600 +2152,10 @@ public final class RiverHydrology {
         return Math.max(1, cells) * CELL_SIZE_M;
     }
 
-    private static void flowTangents(float[] elev, int[] chanIdx, int[] down,
-                                     float[] perROut, float[] perCOut) {
-        for (int i : chanIdx) {
-            if (elev[i] < 0f) {
-                continue;
-            }
-            int ahead = i;
-            for (int s = 0; s < MEANDER_TANGENT_CELLS; s++) {
-                int step = successor(down, ahead);
-                if (step < 0) {
-                    break;
-                }
-                ahead = step;
-            }
-            float dr = (ahead / GRID) - (i / GRID), dc = (ahead % GRID) - (i % GRID);
-            float len = (float) Math.sqrt(dr * dr + dc * dc);
-            if (len <= 0f) {
-                continue;
-            }
-            perROut[i] = -dc / len;
-            perCOut[i] = dr / len;
-        }
-    }
-
-    private static void hydraulicGeometry(float[] elev, boolean[] channel, int[] chanIdx, int[] chanUp,
-                                          float[] acc, int[] down,
-                                          float[] perR, float[] perC,
-                                          float[] widthOut, float[] depthOut) {
-        int[] order = strahlerOrder(elev, channel, down, chanUp);
-        for (int i : chanIdx) {
-            if (elev[i] < 0f) {
-                continue;
-            }
-
-            double area = Math.max(1.0, acc[i] / RIVER_THRESHOLD);
-            double q = Math.pow(area, DISCHARGE_AREA_EXPONENT);
-            float w = BANKFULL_WIDTH_M * (float) Math.pow(q, WIDTH_Q_EXPONENT);
-            float dep = BANKFULL_DEPTH_M * (float) Math.pow(q, DEPTH_Q_EXPONENT);
-
-            w *= 1f + ORDER_WIDTH_GAIN * (order[i] - 1);
-
-            w = MAX_WIDTH_M * w / (MAX_WIDTH_M + w);
-            dep = MAX_DEPTH_M * dep / (MAX_DEPTH_M + dep);
-
-            float floorM = valleyFloorM(elev, i / GRID, i % GRID, perR[i], perC[i]);
-            w = Math.min(w, CONFINEMENT_FRACTION * floorM);
-
-            float squeeze = Math.min(2f, Math.max(1f,
-                    (BANKFULL_WIDTH_M * (float) Math.pow(q, WIDTH_Q_EXPONENT)) / Math.max(1f, w)));
-            dep *= (float) Math.sqrt(squeeze);
-
-            widthOut[i] = Math.max(CELL_SIZE_M * 0.25f, w);
-            depthOut[i] = Math.max(0.5f, dep);
-        }
-    }
-
-    private static void meanderOffsets(float[] elev, int[] chanIdx, float[] widthM,
-                                       float[] perR, float[] perC, int windowI, int windowJ,
-                                       float[] offROut, float[] offCOut) {
-        for (int i : chanIdx) {
-            if (elev[i] < 0f) {
-                continue;
-            }
-            float perpR = perR[i], perpC = perC[i];
-            if (perpR == 0f && perpC == 0f) {
-                continue;
-            }
-            int r = i / GRID, c = i % GRID;
-            float floorM = valleyFloorM(elev, r, c, perpR, perpC);
-
-            float ampM = MEANDER_AMPLITUDE_WIDTHS * widthM[i];
-            ampM = Math.max(ampM, MEANDER_MIN_AMPLITUDE_M);
-            ampM = Math.min(ampM, MEANDER_SPACE_FRACTION * floorM);
-            if (ampM <= 0f) {
-                continue;
-            }
-            float lamCells = MEANDER_ASPECT * ampM / CELL_SIZE_M;
-
-            float nx = (windowJ + c) * (float) DOWNSAMPLE;
-            float ny = (windowI + r) * (float) DOWNSAMPLE;
-            float lateral = 0f, weight = 0f;
-            float t = (float) (Math.log(Math.max(1f, lamCells)) / Math.log(2));
-            for (int k = 0; k < MEANDER_BAND_CELLS.length; k++) {
-                float tk = (float) (Math.log(MEANDER_BAND_CELLS[k]) / Math.log(2));
-                float wk = 1f - Math.abs(t - tk) / 1.585f;
-                if (wk <= 0f) {
-                    continue;
-                }
-                lateral += wk * (MEANDER_BAND_I[k].GetNoise(nx, ny) * perpR
-                        + MEANDER_BAND_J[k].GetNoise(nx, ny) * perpC);
-                weight += wk;
-            }
-            if (weight <= 0f) {
-                continue;
-            }
-            lateral /= weight;
-
-            float want = lateral * (ampM / CELL_SIZE_M);
-            float shift = valleyLimit(elev, r, c, perpR, perpC, want, MEANDER_CLIMB_M);
-            offROut[i] = perpR * shift;
-            offCOut[i] = perpC * shift;
-        }
-    }
-
-    private static float freeboardM(float depthM, float blockM) {
-        return Math.max(FREEBOARD_BLOCKS * blockM, 0.5f * depthM);
-    }
-
-    private static float[] containGround(float[] filled, float[] elev, int[] chanIdx,
-                                         float[] offR, float[] offC, float[] perR, float[] perC,
-                                         float[] widthM) {
-        int n = GRID * GRID;
-        float[] hold = new float[n];
-        Arrays.fill(hold, Float.NaN);
-        float[] buf = new float[64];
-        for (int i : chanIdx) {
-            if (elev[i] < 0f) {
-                continue;
-            }
-            float r0 = (i / GRID) + offR[i], c0 = (i % GRID) + offC[i];
-            float halfCells = 0.5f * widthM[i] / CELL_SIZE_M;
-            int span = Math.max(1, (int) Math.ceil(halfCells * 1.25f));
-            int got = 0;
-            for (int s = -span; s <= span && got < buf.length; s++) {
-                float g = sampleGrid(filled, r0 + perR[i] * s, c0 + perC[i] * s);
-                if (!Float.isNaN(g)) {
-                    buf[got++] = g;
-                }
-            }
-            if (got == 0) {
-                hold[i] = filled[i];
-                continue;
-            }
-
-            int k = Math.min(got - 1, (int) Math.floor(HOLD_QUANTILE * got));
-            for (int a = 0; a <= k; a++) {
-                int m = a;
-                for (int b = a + 1; b < got; b++) {
-                    if (buf[b] < buf[m]) {
-                        m = b;
-                    }
-                }
-                float t = buf[a];
-                buf[a] = buf[m];
-                buf[m] = t;
-            }
-            hold[i] = buf[k];
-        }
-        return hold;
-    }
-
-    private static void solveLevels(float[] elev, boolean[] channel, int[] chanIdx, int[] chanUp,
-                                    float[] lake, float[] holdM,
-                                    float[] depthM, float[] widthM, int[] down,
-                                    float blockM, float[] waterOut, float[] fallOut) {
-        int n = GRID * GRID;
-        float[] lvl = new float[n];
-        Arrays.fill(lvl, Float.NaN);
-        boolean[] pinned = new boolean[n];
-        float gorge = Math.max(1f, GORGE_LIMIT_BLOCKS) * blockM;
-
-        for (int oi = chanUp.length - 1; oi >= 0; oi--) {
-            int i = chanUp[oi];
-            float here;
-            if (elev[i] < 0f) {
-                here = 0f;
-                pinned[i] = true;
-            } else if (!Float.isNaN(lake[i])) {
-
-                here = lake[i];
-                pinned[i] = true;
-            } else {
-
-                float freeboard = freeboardM(depthM[i], blockM);
-                float own = holdM[i] - freeboard;
-                if (own < 0f) {
-                    own = 0f;
-                }
-                if (Float.isNaN(lvl[i])) {
-                    here = own;
-                } else {
-                    here = Math.min(lvl[i], own);
-                    float drop = lvl[i] - here;
-                    if (drop > gorge) {
-                        fallOut[i] = drop / blockM;
-                    }
-                }
-            }
-            lvl[i] = here;
-            int d = successor(down, i);
-            if (d >= 0 && channel[d] && (Float.isNaN(lvl[d]) || here < lvl[d])) {
-                lvl[d] = here;
-            }
-        }
-
-        int scanCap = SCAN_CAP;
-        for (int sweep = 0; sweep < 12; sweep++) {
-            boolean moved = false;
-            for (int i : chanIdx) {
-                if (Float.isNaN(lvl[i]) || pinned[i]) {
-                    continue;
-                }
-                int r = i / GRID, c = i % GRID;
-                float halfI = 0.5f * widthM[i] / CELL_SIZE_M;
-                int rad = Math.min(scanCap, (int) Math.ceil(halfI) + 3);
-                if (r < rad || c < rad || r >= GRID - rad || c >= GRID - rad) {
-                    continue;
-                }
-                float lowest = Float.MAX_VALUE;
-                for (int dr = -rad; dr <= rad; dr++) {
-                    for (int dc = -rad; dc <= rad; dc++) {
-                        if (dr == 0 && dc == 0) {
-                            continue;
-                        }
-                        int j = i + dr * GRID + dc;
-                        if (!channel[j] || Float.isNaN(lvl[j]) || lvl[j] >= lowest) {
-                            continue;
-                        }
-                        float sep = (float) Math.sqrt(dr * dr + dc * dc);
-
-                        float reach = OVERLAP_REACH * (halfI + 0.5f * widthM[j] / CELL_SIZE_M);
-                        if (sep <= reach) {
-                            lowest = lvl[j];
-                        }
-                    }
-                }
-                float tol = OVERLAP_AGREE_BLOCKS * blockM;
-                if (lowest != Float.MAX_VALUE && lvl[i] > lowest + tol) {
-                    lvl[i] = lowest + tol;
-                    moved = true;
-                }
-            }
-            if (!moved) {
-                break;
-            }
-        }
-
-        for (int sweep = 0; sweep < 24; sweep++) {
-            boolean moved = false;
-            for (int i : chanIdx) {
-                if (Float.isNaN(lvl[i]) || pinned[i]) {
-                    continue;
-                }
-                int r = i / GRID, c = i % GRID;
-                if (r < 1 || c < 1 || r >= GRID - 1 || c >= GRID - 1) {
-                    continue;
-                }
-                float lowest = Float.MAX_VALUE;
-                for (int dr = -1; dr <= 1; dr++) {
-                    for (int dc = -1; dc <= 1; dc++) {
-                        if (dr == 0 && dc == 0) {
-                            continue;
-                        }
-                        int j = i + dr * GRID + dc;
-                        if (channel[j] && !Float.isNaN(lvl[j]) && lvl[j] < lowest) {
-                            lowest = lvl[j];
-                        }
-                    }
-                }
-                if (lowest != Float.MAX_VALUE && lvl[i] > lowest + blockM) {
-                    lvl[i] = lowest + blockM;
-                    moved = true;
-                }
-            }
-            if (!moved) {
-                break;
-            }
-        }
-
-        for (int oi = chanUp.length - 1; oi >= 0; oi--) {
-            int i = chanUp[oi];
-            if (Float.isNaN(lvl[i])) {
-                continue;
-            }
-            int d = successor(down, i);
-            if (d >= 0 && channel[d] && !Float.isNaN(lvl[d]) && !pinned[d] && lvl[d] > lvl[i]) {
-                lvl[d] = lvl[i];
-            }
-        }
-
-        Arrays.fill(fallOut, 0f);
-        if (FALLS_ENABLED) {
-        for (int i : chanIdx) {
-            if (Float.isNaN(lvl[i])) {
-                continue;
-            }
-            int d = successor(down, i);
-            if (d < 0 || !channel[d] || Float.isNaN(lvl[d])) {
-                continue;
-            }
-            float drop = lvl[i] - lvl[d];
-            if (drop > gorge && drop / blockM > fallOut[d]) {
-                fallOut[d] = drop / blockM;
-            }
-        }
-        }
-
-        for (int i : chanUp) {
-            if (Float.isNaN(lvl[i]) || pinned[i]) {
-                continue;
-            }
-            int d = successor(down, i);
-            if (d < 0 || !channel[d] || Float.isNaN(lvl[d])) {
-                continue;
-            }
-            if (fallOut[d] >= FALL_MIN_DROP_BLOCKS) {
-                continue;
-            }
-            if (lvl[i] > lvl[d] + blockM) {
-                lvl[i] = lvl[d] + blockM;
-            }
-        }
-
-        float[] cont = new float[n];
-        for (int i = 0; i < n; i++) {
-            cont[i] = (channel[i] && !Float.isNaN(lvl[i])) ? lvl[i] : Float.NaN;
-        }
-        float[] copy = new float[n];
-        float[] predSum = new float[n];
-        int[] predCnt = new int[n];
-        for (int pass = 0; pass < DEQUANT_PASSES; pass++) {
-            System.arraycopy(cont, 0, copy, 0, n);
-            for (int i : chanIdx) {
-                predSum[i] = 0f;
-                predCnt[i] = 0;
-            }
-            for (int i : chanIdx) {
-                if (Float.isNaN(copy[i])) {
-                    continue;
-                }
-                int d = successor(down, i);
-                if (d >= 0 && !Float.isNaN(copy[d])) {
-                    predSum[d] += copy[i];
-                    predCnt[d]++;
-                }
-            }
-            for (int i : chanIdx) {
-                if (Float.isNaN(copy[i]) || pinned[i]) {
-                    continue;
-                }
-                int d = successor(down, i);
-                float dn = (d >= 0 && !Float.isNaN(copy[d])) ? copy[d] : copy[i];
-                float up = predCnt[i] > 0 ? predSum[i] / predCnt[i] : copy[i];
-                cont[i] = 0.5f * copy[i] + 0.25f * dn + 0.25f * up;
-            }
-
-            for (int i : chanIdx) {
-                if (Float.isNaN(cont[i]) || pinned[i]) {
-                    continue;
-                }
-                float freeboard = freeboardM(depthM[i], blockM);
-                float capM = holdM[i] - freeboard;
-                if (cont[i] > capM) {
-                    cont[i] = capM;
-                }
-                if (cont[i] < 0f) {
-                    cont[i] = 0f;
-                }
-            }
-
-            for (int oi = chanUp.length - 1; oi >= 0; oi--) {
-                int i = chanUp[oi];
-                if (Float.isNaN(cont[i])) {
-                    continue;
-                }
-                int d = successor(down, i);
-                if (d >= 0 && !Float.isNaN(cont[d]) && !pinned[d] && cont[d] > cont[i]) {
-                    cont[d] = cont[i];
-                }
-            }
-        }
-
-        for (int i = 0; i < n; i++) {
-            waterOut[i] = cont[i];
-        }
-    }
-
-    private static void meander(float[] elev, boolean[] channel, int[] chanIdx, int[] down, float[] acc,
-                                float[] water, float[] offR, float[] offC,
-                                float[] widthM, float[] depthM, float[] fallDrop, Paint p) {
-        int n = GRID * GRID;
-        float[] mag = new float[n];
-        for (int i : chanIdx) {
-            if (elev[i] < 0f) {
-                continue;
-            }
-            mag[i] = (float) (Math.log10(Math.max(1.0, acc[i] / RIVER_THRESHOLD))
-                    / WIDTH_GROWTH_DECADES);
-        }
-
-        for (int i : chanIdx) {
-            if (elev[i] < 0f) {
-                continue;
-            }
-
-            float r0 = (i / GRID) + offR[i], c0 = (i % GRID) + offC[i];
-            int d = successor(down, i);
-            if (d < 0) {
-                plot(p, r0, c0, mag[i], water[i], widthM[i], depthM[i], fallDrop[i], 0f, i);
-                continue;
-            }
-
-            boolean live = channel[d] && elev[d] >= 0f;
-            trace(p, r0, c0, (d / GRID) + offR[d], (d % GRID) + offC[d],
-                    mag[i], live ? mag[d] : mag[i],
-                    water[i], live ? water[d] : water[i],
-                    widthM[i], live ? widthM[d] : widthM[i],
-                    depthM[i], live ? depthM[d] : depthM[i],
-                    fallDrop[i], live ? fallDrop[d] : fallDrop[i], 0f,
-                    i, live ? d : i);
-        }
-
-    }
-
-    private static float[] seaDistance(float[] elev) {
-        int n = GRID * GRID;
-        float[] d = new float[n];
-        float far = GRID * 2f;
-        for (int i = 0; i < n; i++) {
-            d[i] = elev[i] < 0f ? 0f : far;
-        }
-        final float ORTH = 1f, DIAG = 1.41421f;
-        for (int r = 0; r < GRID; r++)
-            for (int c = 0; c < GRID; c++) {
-                int i = r * GRID + c;
-                if (r > 0) d[i] = Math.min(d[i], d[i - GRID] + ORTH);
-                if (c > 0) d[i] = Math.min(d[i], d[i - 1] + ORTH);
-                if (r > 0 && c > 0) d[i] = Math.min(d[i], d[i - GRID - 1] + DIAG);
-                if (r > 0 && c < GRID - 1) d[i] = Math.min(d[i], d[i - GRID + 1] + DIAG);
-            }
-        for (int r = GRID - 1; r >= 0; r--)
-            for (int c = GRID - 1; c >= 0; c--) {
-                int i = r * GRID + c;
-                if (r < GRID - 1) d[i] = Math.min(d[i], d[i + GRID] + ORTH);
-                if (c < GRID - 1) d[i] = Math.min(d[i], d[i + 1] + ORTH);
-                if (r < GRID - 1 && c < GRID - 1) d[i] = Math.min(d[i], d[i + GRID + 1] + DIAG);
-                if (r < GRID - 1 && c > 0) d[i] = Math.min(d[i], d[i + GRID - 1] + DIAG);
-            }
-        return d;
-    }
-
-    private static final float PERCH_FULL_BLOCKS =
-            Float.parseFloat(System.getProperty("terradiff.perchFull", "20"));
-
-    private static final float PERCH_FADE_BLOCKS =
-            Float.parseFloat(System.getProperty("terradiff.perchFade", "13"));
-
-    private static final float PERCH_RESIDUAL_BLOCKS =
-            Float.parseFloat(System.getProperty("terradiff.perchResidual", "12"));
-
-    private static final boolean PERCH_PRUNE =
-            !"false".equals(System.getProperty("terradiff.perchPrune"));
-
-    // Returns whether any channel cell was removed
-    private static boolean prunePerched(boolean[] channel, float[] water, float[] elev, float[] lake,
-                                        int[] down, float blockM) {
-        if (!PERCH_PRUNE) {
-            return false;
-        }
-        int n = GRID * GRID;
-        float full = PERCH_FULL_BLOCKS * blockM;
-        float fade = Math.max(1.0e-3f, PERCH_FADE_BLOCKS * blockM);
-        float allow = PERCH_RESIDUAL_BLOCKS * blockM;
-        boolean[] blocked = new boolean[n];
-        int blockedCount = 0;
-        for (int i = 0; i < n; i++) {
-            if (!channel[i] || Float.isNaN(water[i])) {
-                continue;
-            }
-            if (!Float.isNaN(lake[i])) {
-                continue;
-            }
-            float perch = elev[i] - water[i];
-            if (perch <= full) {
-                continue;
-            }
-            float t = (perch - full) / fade;
-            t = t < 0f ? 0f : (t > 1f ? 1f : t);
-            float keep = 1f - t * t * (3f - 2f * t);
-            if (perch * (1f - keep) >= allow) {
-                blocked[i] = true;
-                blockedCount++;
-            }
-        }
-        if (blockedCount == 0) {
-            return false;
-        }
-
-        final byte UNKNOWN = 0, REACHES = 1, STRANDED = 2;
-        byte[] fate = new byte[n];
-        int[] path = new int[GRID * 4 + 2];
-        for (int start = 0; start < n; start++) {
-            if (!channel[start] || fate[start] != UNKNOWN) {
-                continue;
-            }
-            int len = 0;
-            int at = start;
-            byte verdict = STRANDED;
-            while (len < path.length) {
-                path[len++] = at;
-                fate[at] = STRANDED;
-                if (blocked[at]) {
-                    break;
-                }
-                int r = at / GRID, c = at % GRID;
-                if (r < 1 || c < 1 || r >= GRID - 1 || c >= GRID - 1) {
-                    verdict = REACHES;
-                    break;
-                }
-                int d = successor(down, at);
-                if (d < 0) {
-                    break;
-                }
-                if (elev[d] < 0f || fate[d] == REACHES) {
-                    verdict = REACHES;
-                    break;
-                }
-                if (fate[d] == STRANDED && d != at) {
-                    break;
-                }
-                at = d;
-            }
-            for (int k = 0; k < len; k++) {
-                fate[path[k]] = verdict;
-            }
-        }
-        int pruned = 0;
-        for (int i = 0; i < n; i++) {
-            if (channel[i] && fate[i] == STRANDED) {
-                channel[i] = false;
-                water[i] = Float.NaN;
-                pruned++;
-            }
-        }
-        if (Boolean.getBoolean("terradiff.diag")) {
-            System.err.printf("diag perch-pruned %d channel cells behind %d perched barriers%n",
-                    pruned, blockedCount);
-        }
-        return pruned > 0;
-    }
-
-    // Channel cells in index order, or in the given order when there is one
-    private static int[] channelCells(boolean[] channel, int[] order) {
-        int count = 0;
-        for (boolean b : channel) {
-            if (b) count++;
-        }
-        int[] out = new int[count];
-        int k = 0;
-        if (order == null) {
-            for (int i = 0; i < channel.length; i++) {
-                if (channel[i]) out[k++] = i;
-            }
-        } else {
-            for (int i : order) {
-                if (channel[i]) out[k++] = i;
-            }
-        }
-        return out;
-    }
-
-    private static int successor(int[] down, int i) {
-        int d = down[i];
-        if (d < 0 || d == i) {
-            return -1;
-        }
-        int dr = (d / GRID) - (i / GRID), dc = (d % GRID) - (i % GRID);
-        return (Math.abs(dr) <= 1 && Math.abs(dc) <= 1) ? d : -1;
-    }
-
-    private static float valleyLimit(float[] elev, int r, int c,
-                                     float perpR, float perpC, float want, float climbM) {
-        float limit = Math.abs(want);
-        if (limit <= 0f) {
-            return 0f;
-        }
-        float sign = want < 0f ? -1f : 1f;
-        float ceiling = elev[r * GRID + c] + climbM;
-        float reached = 0f;
-        int steps = (int) Math.ceil(limit);
-        for (int s = 1; s <= steps; s++) {
-            float t = Math.min(s, limit);
-            int rr = Math.round(r + perpR * t * sign);
-            int cc = Math.round(c + perpC * t * sign);
-            if (rr < 1 || cc < 1 || rr >= GRID - 1 || cc >= GRID - 1) {
-                break;
-            }
-            if (elev[rr * GRID + cc] > ceiling) {
-                break;
-            }
-            reached = t;
-        }
-        return reached * sign;
-    }
+    private static final int[] V2_DR = {-1, -1, -1, 0, 0, 1, 1, 1};
+    private static final int[] V2_DC = {-1, 0, 1, -1, 1, -1, 0, 1};
+    private static final int[] V2_FR = {-1, -1, -1, 0};
+    private static final int[] V2_FC = {-1, 0, 1, -1};
 
     private static final class Paint {
         final float[] distance, magnitude, water, deltaW, width, depth, fall;
@@ -2286,337 +2180,4 @@ public final class RiverHydrology {
         }
     }
 
-    private static void trace(Paint p, float r0, float c0, float r1, float c1,
-                              float m0, float m1, float w0, float w1,
-                              float wid0, float wid1, float dep0, float dep1,
-                              float fall0, float fall1, float dw,
-                              int src0, int src1) {
-        float dr = r1 - r0, dc = c1 - c0;
-        int steps = Math.max(1, (int) Math.ceil(2f * Math.max(Math.abs(dr), Math.abs(dc))));
-        for (int s = 0; s <= steps; s++) {
-            float t = s / (float) steps;
-            boolean near = t < 0.5f;
-            plot(p, r0 + dr * t, c0 + dc * t,
-                    near ? m0 : m1, near ? w0 : w1,
-                    near ? wid0 : wid1, near ? dep0 : dep1, near ? fall0 : fall1, dw,
-                    near ? src0 : src1);
-        }
-    }
-
-    private static void plot(Paint p, float rf, float cf, float m, float w,
-                             float wid, float dep, float fl, float dw, int srcIdx) {
-        int r = Math.round(rf), c = Math.round(cf);
-        if (r < 0 || c < 0 || r >= GRID || c >= GRID) {
-            return;
-        }
-        int i = r * GRID + c;
-        if (p.distance[i] == 0f) {
-
-            if (m > p.magnitude[i]) {
-                p.magnitude[i] = m;
-            }
-            if (!Float.isNaN(w) && (Float.isNaN(p.water[i]) || w > p.water[i])) {
-                p.water[i] = w;
-                p.src[i] = srcIdx;
-                p.pos[i] = (srcIdx >= 0 && ARC_POS != null) ? ARC_POS[srcIdx] : Float.NaN;
-            }
-            if (wid > p.width[i]) {
-                p.width[i] = wid;
-            }
-            if (dep > p.depth[i]) {
-                p.depth[i] = dep;
-            }
-            if (fl > p.fall[i]) {
-                p.fall[i] = fl;
-            }
-            if (dw > p.deltaW[i]) {
-                p.deltaW[i] = dw;
-            }
-            return;
-        }
-        p.distance[i] = 0f;
-        p.magnitude[i] = m;
-        p.water[i] = w;
-        p.src[i] = srcIdx;
-        p.pos[i] = (srcIdx >= 0 && ARC_POS != null) ? ARC_POS[srcIdx] : Float.NaN;
-        p.width[i] = wid;
-        p.depth[i] = dep;
-        p.fall[i] = fl;
-        p.deltaW[i] = dw;
-    }
-
-    // Smallest catchment worth carrying in, in native cells
-    private static final float SEED_MIN_CELLS =
-            Float.parseFloat(System.getProperty("terradiff.seedMinCells", "200000"));
-
-    private static float[] accumulate(WorldPipeline pipeline, float[] elev, float[] slopeSurface,
-                                      float[] fillDepthOut, int[] downOut, float[] slopeOut,
-                                      int windowI, int windowJ, float blockM, float[] seaDist,
-                                      boolean[] extraOutlets) {
-        int n = GRID * GRID;
-        float[] filled = elev.clone();
-        boolean[] closed = new boolean[n];
-
-        Arrays.fill(slopeOut, Float.MAX_VALUE);
-
-        Arrays.fill(downOut, -1);
-
-        LongHeap open = new LongHeap(n);
-
-        for (int i = 0; i < n; i++) {
-            int r = i / GRID, c = i % GRID;
-            if (elev[i] < 0f || (extraOutlets != null && extraOutlets[i])
-                    || r == 0 || c == 0 || r == GRID - 1 || c == GRID - 1) {
-                closed[i] = true;
-                open.push(pack(filled[i], i));
-            }
-        }
-
-        int[] nr4 = {-1, -1, -1, 0, 0, 1, 1, 1}, nc4 = {-1, 0, 1, -1, 1, -1, 0, 1};
-        while (!open.isEmpty()) {
-            int i = (int) open.pop();
-            int r = i / GRID, c = i % GRID;
-            for (int k = 0; k < 8; k++) {
-                int rr = r + nr4[k], cc = c + nc4[k];
-                if (rr < 0 || cc < 0 || rr >= GRID || cc >= GRID) continue;
-                int j = rr * GRID + cc;
-                if (closed[j]) continue;
-                closed[j] = true;
-                if (filled[j] <= filled[i]) {
-                    filled[j] = filled[i] + FILL_EPSILON_M;
-                }
-                open.push(pack(filled[j], j));
-            }
-        }
-
-        phase("  flood");
-        int[] nr8 = {-1, -1, -1, 0, 0, 1, 1, 1}, nc8 = {-1, 0, 1, -1, 1, -1, 0, 1};
-
-        float[] toOutlet = new float[n];
-        Arrays.fill(toOutlet, -1f);
-        int[] flatQueue = new int[n];
-        int flatHead = 0, flatTail = 0;
-
-        for (int i = 0; i < n; i++) {
-            int r = i / GRID, c = i % GRID;
-            if (r == 0 || c == 0 || r == GRID - 1 || c == GRID - 1) {
-                continue;
-            }
-            for (int k = 0; k < 8; k++) {
-                if (filled[i] - filled[(r + nr8[k]) * GRID + (c + nc8[k])] > FLAT_DROP_M) {
-                    toOutlet[i] = 0f;
-                    flatQueue[flatTail++] = i;
-                    break;
-                }
-            }
-        }
-
-        while (flatHead < flatTail) {
-            int i = flatQueue[flatHead++];
-            int r = i / GRID, c = i % GRID;
-            for (int k = 0; k < 8; k++) {
-                int rr = r + nr8[k], cc = c + nc8[k];
-                if (rr < 1 || cc < 1 || rr >= GRID - 1 || cc >= GRID - 1) {
-                    continue;
-                }
-                int j = rr * GRID + cc;
-                if (toOutlet[j] >= 0f) {
-                    continue;
-                }
-                toOutlet[j] = toOutlet[i] + 1f;
-                flatQueue[flatTail++] = j;
-            }
-        }
-
-        for (int i = 0; i < n; i++) {
-            if (toOutlet[i] > 0f) {
-
-                float n01 = 0.5f + 0.5f * ROUTING_DETAIL.GetNoise(
-                        (windowJ + i % GRID) * (float) DOWNSAMPLE,
-                        (windowI + i / GRID) * (float) DOWNSAMPLE);
-                filled[i] += Math.min(FLAT_GRADIENT_M * (toOutlet[i] + n01), FLAT_TILT_MAX_M);
-            }
-        }
-
-        int noDescentReported = 0;
-        phase("  flatBFS");
-        int[] ascending = orderBy(filled, n);
-        phase("  orderBy");
-
-        float[] acc = new float[n];
-        Arrays.fill(acc, 1f);
-
-        final float QUADRANT = (float) (Math.PI / 4.0);
-        for (int oi = n - 1; oi >= 0; oi--) {
-            int i = ascending[oi];
-            if (elev[i] < 0f || (extraOutlets != null && extraOutlets[i])) {
-                continue;
-            }
-            int r = i / GRID, c = i % GRID;
-            if (r == 0 || c == 0 || r == GRID - 1 || c == GRID - 1) {
-                continue;
-            }
-
-            float steepest = 0f;
-            for (int k = 0; k < 8; k++) {
-                int j = (r + nr8[k]) * GRID + (c + nc8[k]);
-                float step = (nr8[k] != 0 && nc8[k] != 0) ? 1.41421f : 1f;
-
-                float trueSlope = (slopeSurface[i] - slopeSurface[j]) / (step * CELL_SIZE_M);
-                if (trueSlope > steepest) {
-                    steepest = trueSlope;
-                }
-            }
-            slopeOut[i] = steepest;
-
-            float bestSlope = 0f, bestAngle = 0f;
-            int bestCardinal = -1, bestDiagonal = -1;
-            float bestS1 = 0f, bestS2 = 0f;
-            int bestClamp = 0;
-            for (int f = 0; f < 8; f++) {
-                int cardinal = (r + FACET_CR[f]) * GRID + (c + FACET_CC[f]);
-                int diagonal = (r + FACET_DR[f]) * GRID + (c + FACET_DC[f]);
-                float s1 = filled[i] - filled[cardinal];
-                float s2 = filled[cardinal] - filled[diagonal];
-                float mag;
-                int clamp;
-                if (s2 < 0f) {
-                    mag = s1;
-                    clamp = -1;
-                } else if ((s1 <= 0f && !(s1 == 0f && s2 == 0f)) || s2 > s1) {
-                    mag = (filled[i] - filled[diagonal]) / 1.41421f;
-                    clamp = 1;
-                } else {
-                    mag = (float) Math.sqrt(s1 * s1 + s2 * s2);
-                    clamp = 0;
-                }
-                if (mag > bestSlope) {
-                    bestSlope = mag;
-                    bestCardinal = cardinal;
-                    bestDiagonal = diagonal;
-                    bestS1 = s1;
-                    bestS2 = s2;
-                    bestClamp = clamp;
-                }
-            }
-            bestAngle = bestClamp < 0 ? 0f
-                    : bestClamp > 0 ? QUADRANT
-                    : (float) Math.atan2(bestS2, bestS1);
-
-            if (bestCardinal < 0 || bestSlope <= 0f) {
-
-                if (noDescentReported < 4 && Boolean.getBoolean("terradiff.diag")) {
-                    noDescentReported++;
-                    StringBuilder sb = new StringBuilder();
-                    sb.append(String.format(
-                            "diag noDescent r=%d c=%d elev=%.2f filled=%.6f toOutlet=%.0f acc=%.0f nbrs:",
-                            r, c, elev[i], filled[i], toOutlet[i], acc[i]));
-                    for (int k = 0; k < 8; k++) {
-                        int j = (r + nr8[k]) * GRID + (c + nc8[k]);
-                        sb.append(String.format(" [%+d%+d]%.6f(d%+.2e)",
-                                nr8[k], nc8[k], filled[j], filled[i] - filled[j]));
-                    }
-                    System.err.println(sb);
-                }
-                downOut[i] = -1;
-                continue;
-            }
-
-            float toDiagonal = bestAngle / QUADRANT;
-            float toCardinal = 1f - toDiagonal;
-            acc[bestCardinal] += acc[i] * toCardinal;
-            acc[bestDiagonal] += acc[i] * toDiagonal;
-
-            downOut[i] = toCardinal >= toDiagonal ? bestCardinal : bestDiagonal;
-        }
-        phase("  dinfRouting");
-        for (int i = 0; i < n; i++) fillDepthOut[i] = filled[i] - elev[i];
-        return acc;
-    }
-
-    private static void edt2d(float[] f, int w, int h) {
-        int longest = Math.max(w, h);
-        float[] col = new float[longest];
-        float[] out = new float[longest];
-        int[] v = new int[longest];
-        float[] z = new float[longest + 1];
-
-        for (int c = 0; c < w; c++) {
-            for (int r = 0; r < h; r++) col[r] = f[r * w + c];
-            edt1d(col, out, v, z, h);
-            for (int r = 0; r < h; r++) f[r * w + c] = out[r];
-        }
-        for (int r = 0; r < h; r++) {
-            System.arraycopy(f, r * w, col, 0, w);
-            edt1d(col, out, v, z, w);
-            System.arraycopy(out, 0, f, r * w, w);
-        }
-    }
-
-    private static void edt1d(float[] f, float[] d, int[] v, float[] z, int n) {
-        final float INF = Float.MAX_VALUE / 4f;
-        int k = 0;
-        v[0] = 0;
-        z[0] = -INF;
-        z[1] = INF;
-        for (int q = 1; q < n; q++) {
-            float s = ((f[q] + q * (float) q) - (f[v[k]] + v[k] * (float) v[k]))
-                    / (2f * q - 2f * v[k]);
-            while (k > 0 && s <= z[k]) {
-                k--;
-                s = ((f[q] + q * (float) q) - (f[v[k]] + v[k] * (float) v[k]))
-                        / (2f * q - 2f * v[k]);
-            }
-            k++;
-            v[k] = q;
-            z[k] = s;
-            z[k + 1] = INF;
-        }
-        k = 0;
-        for (int q = 0; q < n; q++) {
-            while (z[k + 1] < q) {
-                k++;
-            }
-            float dx = q - v[k];
-            d[q] = dx * dx + f[v[k]];
-        }
-    }
-
-    private static void chamfer(Paint p) {
-        final float ORTH = 1f, DIAG = 1.41421f;
-        for (int r = 0; r < GRID; r++)
-            for (int c = 0; c < GRID; c++) {
-                int i = r * GRID + c;
-                if (r > 0) relax(p, i, i - GRID, ORTH);
-                if (c > 0) relax(p, i, i - 1, ORTH);
-                if (r > 0 && c > 0) relax(p, i, i - GRID - 1, DIAG);
-                if (r > 0 && c < GRID - 1) relax(p, i, i - GRID + 1, DIAG);
-            }
-        for (int r = GRID - 1; r >= 0; r--)
-            for (int c = GRID - 1; c >= 0; c--) {
-                int i = r * GRID + c;
-                if (r < GRID - 1) relax(p, i, i + GRID, ORTH);
-                if (c < GRID - 1) relax(p, i, i + 1, ORTH);
-                if (r < GRID - 1 && c < GRID - 1) relax(p, i, i + GRID + 1, DIAG);
-                if (r < GRID - 1 && c > 0) relax(p, i, i + GRID - 1, DIAG);
-            }
-    }
-
-    private static void relax(Paint p, int i, int from, float step) {
-        if (p.distance[from] == Float.MAX_VALUE) {
-            return;
-        }
-        float candidate = p.distance[from] + step;
-        if (candidate < p.distance[i]) {
-            p.distance[i] = candidate;
-            p.src[i] = p.src[from];
-            p.pos[i] = p.pos[from];
-            p.magnitude[i] = p.magnitude[from];
-            p.water[i] = p.water[from];
-            p.deltaW[i] = p.deltaW[from];
-            p.width[i] = p.width[from];
-            p.depth[i] = p.depth[from];
-            p.fall[i] = p.fall[from];
-        }
-    }
 }

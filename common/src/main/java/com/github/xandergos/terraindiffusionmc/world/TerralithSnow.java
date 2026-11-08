@@ -1,6 +1,6 @@
 package com.github.xandergos.terraindiffusionmc.world;
 
-import com.github.xandergos.terraindiffusionmc.mixin.HolderReferenceAccessor;
+import com.github.xandergos.terraindiffusionmc.mixin.ales.HolderReferenceAccessor;
 import com.github.xandergos.terraindiffusionmc.pipeline.TerralithCompat;
 import net.minecraft.core.Holder;
 import net.minecraft.core.Registry;
@@ -14,7 +14,7 @@ import net.minecraft.world.level.levelgen.feature.configurations.NoneFeatureConf
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-// Turns off the snow Terralith paints on rocky and scarlet mountains, which this generator places above the snow line
+// Turns off the snow Terralith paints on rocky and scarlet mountains
 public final class TerralithSnow {
     private static final Logger LOG = LoggerFactory.getLogger(TerralithSnow.class);
 
@@ -41,7 +41,7 @@ public final class TerralithSnow {
         if (!TerralithCompat.isActive()) {
             return;
         }
-        // Placed features stay untouched so the feature order is Terralith's; only what they place changes
+        // Wraps what each placed feature places, keeping Terralith's feature order
         Registry<ConfiguredFeature<?, ?>> configured = world.registryAccess().registryOrThrow(Registries.CONFIGURED_FEATURE);
         int removed = 0;
         for (String path : ROCKY_SNOW) {

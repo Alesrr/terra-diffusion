@@ -17,23 +17,18 @@ public class TerrainDiffusionDensityFunction implements DensityFunction {
                     Codec.BOOL.optionalFieldOf("caves", Boolean.TRUE).forGetter(f -> f.caves)
             ).apply(instance, TerrainDiffusionDensityFunction::new));
 
-    private static final int CAVE_ROOF =
-            Integer.parseInt(System.getProperty("terradiff.caveRoof", "5"));
+    private static final int CAVE_ROOF = 5;
 
-    private static final int DEEP_CLEARANCE =
-            Integer.parseInt(System.getProperty("terradiff.deepClearance", "8"));
+    private static final int DEEP_CLEARANCE = 8;
 
-    private static final int SEA_FLOOR_ROOF =
-            Integer.parseInt(System.getProperty("terradiff.seaFloorRoof", "8"));
+    private static final int SEA_FLOOR_ROOF = 8;
 
-    private static final int CAVE_SIDE =
-            Integer.parseInt(System.getProperty("terradiff.caveSide", "6"));
+    private static final int CAVE_SIDE = 6;
 
-    private static final int RIVER_WALL =
-            Integer.parseInt(System.getProperty("terradiff.riverWall", "3"));
+    private static final int RIVER_WALL = 3;
 
     private static boolean nearRiverWater(HeightmapData data, int localX, int localZ, int y) {
-        if (RIVER_WALL <= 0 || data.waterLevel == null) {
+        if (data.waterLevel == null) {
             return false;
         }
         for (int dz = -RIVER_WALL; dz <= RIVER_WALL; dz++) {
@@ -54,9 +49,6 @@ public class TerrainDiffusionDensityFunction implements DensityFunction {
     }
 
     private static int nearestSurface(HeightmapData data, int localX, int localZ, int here) {
-        if (CAVE_SIDE <= 0) {
-            return here;
-        }
         int lowest = here;
         for (int k = 0; k < 8; k++) {
             int dx = (k == 0 || k == 4 || k == 5) ? CAVE_SIDE
@@ -91,6 +83,15 @@ public class TerrainDiffusionDensityFunction implements DensityFunction {
         return side;
     }
 
+    private static final class TileRef {
+        int startX = Integer.MIN_VALUE;
+        int startZ = Integer.MIN_VALUE;
+        int gen = -1;
+        HeightmapData data;
+    }
+
+    private static final ThreadLocal<TileRef> LAST = ThreadLocal.withInitial(TileRef::new);
+
     public static final TerrainDiffusionDensityFunction INSTANCE =
             new TerrainDiffusionDensityFunction(Boolean.TRUE);
 
@@ -115,11 +116,16 @@ public class TerrainDiffusionDensityFunction implements DensityFunction {
         int blockStartX = tileX << tileShift;
         int blockStartZ = tileZ << tileShift;
 
-        int blockEndX = blockStartX + tileSize;
-        int blockEndZ = blockStartZ + tileSize;
-
-        HeightmapData data = LocalTerrainProvider.getInstance()
-                .fetchHeightmap(blockStartZ, blockStartX, blockEndZ, blockEndX);
+        TileRef ref = LAST.get();
+        int gen = LocalTerrainProvider.generation();
+        if (ref.startX != blockStartX || ref.startZ != blockStartZ || ref.gen != gen) {
+            ref.data = LocalTerrainProvider.getInstance()
+                    .fetchHeightmap(blockStartZ, blockStartX, blockStartZ + tileSize, blockStartX + tileSize);
+            ref.startX = blockStartX;
+            ref.startZ = blockStartZ;
+            ref.gen = gen;
+        }
+        HeightmapData data = ref.data;
 
         if (data == null || data.heightmap == null) {
             return 0.0;
@@ -212,7 +218,8 @@ public class TerrainDiffusionDensityFunction implements DensityFunction {
         boolean shallow = terrain < roof || sideDepth < roof;
         KarstNetwork karst = data.karst;
         if (karst != null && !karst.isEmpty() && !(shallow && underSea)) {
-            float cave = shallow ? karst.dolineDensity(x, y, z, (float) best) : karst.density(x, y, z, (float) best);
+            float cave = NoiseFillCeiling.signOnly(x, z) ? karst.densitySign(x, y, z, shallow)
+                    : shallow ? karst.dolineDensity(x, y, z, (float) best) : karst.density(x, y, z, (float) best);
             if (cave < best) best = cave;
         }
         int deepClear = underSea ? Math.max(DEEP_CLEARANCE, SEA_FLOOR_ROOF) : DEEP_CLEARANCE;

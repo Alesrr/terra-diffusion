@@ -3,7 +3,9 @@
   "minVersion": "0.8",
   "package": "com.github.xandergos.terraindiffusionmc.mixin",
   "compatibilityLevel": "JAVA_21",
-  "mixins": [],
+  "mixins": [
+    "ales.FluidTypeLakeCurrentMixin"
+  ],
   "injectors": {
     "defaultRequire": 1
   }

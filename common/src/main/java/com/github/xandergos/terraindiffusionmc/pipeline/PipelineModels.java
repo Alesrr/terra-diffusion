@@ -82,9 +82,11 @@ public final class PipelineModels implements AutoCloseable {
 
     private PipelineModels() {
         ModelAssetManager.ensureAssetsReady();
-        this.coarseModel = new OnnxModel(ModelAssetManager.resolveAssetPath(COARSE_FILE_NAME), "coarse");
-        this.baseModel = new OnnxModel(ModelAssetManager.resolveAssetPath(BASE_FILE_NAME), "base");
-        this.decoderModel = new OnnxModel(ModelAssetManager.resolveAssetPath(DECODER_FILE_NAME), "decoder");
+        this.coarseModel = new OnnxModel(ModelAssetManager.resolveAssetPath(COARSE_FILE_NAME), "coarse", 0, 1);
+        this.baseModel = new OnnxModel(ModelAssetManager.resolveAssetPath(BASE_FILE_NAME), "base",
+                0, 1, WorldPipeline.LATENT_BATCH);
+        this.decoderModel = new OnnxModel(ModelAssetManager.resolveAssetPath(DECODER_FILE_NAME), "decoder",
+                WorldPipeline.DECODER_TILE_SIZE, 1);
     }
 
     public OnnxModel getCoarseModel() { return coarseModel; }

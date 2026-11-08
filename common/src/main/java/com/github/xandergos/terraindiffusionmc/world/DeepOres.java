@@ -1,6 +1,6 @@
 package com.github.xandergos.terraindiffusionmc.world;
 
-import com.github.xandergos.terraindiffusionmc.mixin.HolderReferenceAccessor;
+import com.github.xandergos.terraindiffusionmc.mixin.ales.HolderReferenceAccessor;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -19,22 +19,17 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 
-// Rewrites placed features at world load so they suit a world floor of -192
+// Rewrites placed features at world load for a world floor of -192
 public final class DeepOres {
 
     private static final Logger LOG = LoggerFactory.getLogger(DeepOres.class);
 
-    private static final boolean ENABLED =
-            !"false".equals(System.getProperty("terradiff.deepOres"));
+    // Lowest Y with no deepslate mixed into the stone
+    private static final int PATCH_FLOOR = 8;
 
-    // Deepslate is pure below Y 0 and mixed up to Y 8, so 8 is the first wholly-stone level
-    private static final int PATCH_FLOOR =
-            Integer.parseInt(System.getProperty("terradiff.patchFloor", "8"));
+    private static final double PATCH_SCALE = 0.5;
 
-    private static final double PATCH_SCALE =
-            Double.parseDouble(System.getProperty("terradiff.patchScale", "0.5"));
-
-    // Blob-shaped rock features only, so surface disks and vegetation are not caught
+    // Blob-shaped rock features only
     private static final List<String> PATCH_FEATURES = List.of(
             "minecraft:ore",
             "minecraft:scattered_ore",
@@ -52,8 +47,6 @@ public final class DeepOres {
 
     @SuppressWarnings("unchecked")
     public static void apply(ServerLevel world) {
-        if (!ENABLED) return;
-
         RegistryAccess access = world.registryAccess();
         Registry<PlacedFeature> registry = access.registryOrThrow(Registries.PLACED_FEATURE);
         RegistryOps<JsonElement> ops = RegistryOps.create(JsonOps.INSTANCE, access);
@@ -220,7 +213,7 @@ public final class DeepOres {
         return null;
     }
 
-    // Modifiers run in order, so a count added where none existed must lead
+    // Puts a newly added count first among the modifiers
     private static void scale(JsonObject root, JsonArray placement, JsonObject count,
                               JsonObject rarity, double factor) {
         if (count != null) {

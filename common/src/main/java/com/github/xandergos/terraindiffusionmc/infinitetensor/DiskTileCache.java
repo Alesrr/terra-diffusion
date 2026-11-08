@@ -18,7 +18,7 @@ import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.zip.CRC32;
 
-// Persists decoded tensor windows so a region survives a restart
+// Persists decoded tensor windows to disk
 public final class DiskTileCache implements AutoCloseable {
 
     private static final Logger LOG = LoggerFactory.getLogger(DiskTileCache.class);

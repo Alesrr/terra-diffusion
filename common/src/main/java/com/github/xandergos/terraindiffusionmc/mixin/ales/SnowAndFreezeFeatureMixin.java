@@ -1,4 +1,4 @@
-package com.github.xandergos.terraindiffusionmc.mixin;
+package com.github.xandergos.terraindiffusionmc.mixin.ales;
 
 import com.github.xandergos.terraindiffusionmc.config.TerrainDiffusionConfig;
 import com.github.xandergos.terraindiffusionmc.pipeline.LocalTerrainProvider;
@@ -146,6 +146,9 @@ public abstract class SnowAndFreezeFeatureMixin {
             BlockState here = level.getBlockState(cursor);
             if (here.isAir() || here.is(BlockTags.LEAVES) || here.is(BlockTags.LOGS)) {
                 continue;
+            }
+            if (!here.getFluidState().isEmpty()) {
+                return;
             }
 
             BlockPos target = cursor.above();

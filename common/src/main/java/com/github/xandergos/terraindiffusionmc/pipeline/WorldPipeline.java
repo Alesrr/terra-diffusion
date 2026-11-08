@@ -26,6 +26,7 @@ public final class WorldPipeline implements AutoCloseable {
     static final int LATENT_TILE_STRIDE = 32;
     static final int DECODER_TILE_SIZE  = 256;
     static final int DECODER_TILE_STRIDE = 192;
+    static final int LATENT_BATCH = 4;
 
     static final float[] MODEL_MEANS = WorldPipelineModelConfig.coarseMeans();
     static final float[] MODEL_STDS = WorldPipelineModelConfig.coarseStds();
@@ -75,6 +76,7 @@ public final class WorldPipeline implements AutoCloseable {
             TerrainDiffusionConfig.tileCacheMb() * 1024L * 1024L;
 
     final RiverHydrology.RegionCache hydrology = new RiverHydrology.RegionCache();
+    final LatentRivers latentRivers = new LatentRivers(this);
     private final boolean readOnlyDisk;
 
     final InfiniteTensor coarse;
@@ -107,9 +109,10 @@ public final class WorldPipeline implements AutoCloseable {
         this.seed = seed & 0xFFFFFFFFFFFFFFFFL;
         this.readOnlyDisk = false;
         ModelAssetManager.ensureAssetsReady();
-        this.coarseModel = new OnnxModel(ModelAssetManager.resolveAssetPath("coarse_model.onnx"), "coarse");
-        this.baseModel = new OnnxModel(ModelAssetManager.resolveAssetPath("base_model.onnx"), "base");
-        this.decoderModel = new OnnxModel(ModelAssetManager.resolveAssetPath("decoder_model.onnx"), "decoder");
+        this.coarseModel = new OnnxModel(ModelAssetManager.resolveAssetPath("coarse_model.onnx"), "coarse", 0, 1);
+        this.baseModel = new OnnxModel(ModelAssetManager.resolveAssetPath("base_model.onnx"), "base", 0, 1, LATENT_BATCH);
+        this.decoderModel = new OnnxModel(ModelAssetManager.resolveAssetPath("decoder_model.onnx"), "decoder",
+                DECODER_TILE_SIZE, 1);
         this.ownModels = true;
         this.syntheticMapFactory = new SyntheticMapFactory(this.seed);
         this.tileStore = new MemoryTileStore();
@@ -127,6 +130,7 @@ public final class WorldPipeline implements AutoCloseable {
         this.syntheticMapFactory = new SyntheticMapFactory(s);
         tileStore.clearAllCaches();
         hydrology.clear();
+        latentRivers.clear();
         attachDiskCache();
     }
 
@@ -232,14 +236,14 @@ public final class WorldPipeline implements AutoCloseable {
                 "init_latent_map", new Integer[]{6, null, null},
                 (wis, args) -> latentBatch(wis, null, args.get(0), tInit, 5819, ww),
                 outWin, new InfiniteTensor[]{coarse}, new TensorWindow[]{coarseWin},
-                cacheLimitBytes, 4);
+                cacheLimitBytes, LATENT_BATCH);
 
         float interT = (float) Math.atan(0.35f / SIGMA_DATA);
         return tileStore.getOrCreateBatched(
                 "step_latent_map_0", new Integer[]{6, null, null},
                 (wis, args) -> latentBatch(wis, args.get(0), args.get(1), interT, 5820, ww),
                 outWin, new InfiniteTensor[]{initLatent, coarse}, new TensorWindow[]{outWin, coarseWin},
-                cacheLimitBytes, 4);
+                cacheLimitBytes, LATENT_BATCH);
     }
 
     private List<FloatTensor> latentBatch(List<int[]> wis, List<FloatTensor> prevSamples,
@@ -436,7 +440,7 @@ public final class WorldPipeline implements AutoCloseable {
         return coarse.getSlice(new int[]{0, ci0, cj0}, new int[]{7, ci1, cj1});
     }
 
-    // Returns the latent stage's low-frequency elevation channel over a latent-pixel box,
+    // Returns the latent stage's low-frequency elevation channel over a latent-pixel box
     public float[] getLowfreqSlice(int li0, int lj0, int li1, int lj1) {
         int h = li1 - li0, w = lj1 - lj0;
         int px = h * w;
@@ -507,6 +511,12 @@ public final class WorldPipeline implements AutoCloseable {
         return flat;
     }
 
+    // Temp, temp std, precip, precip CV, lapse, regional temp, regional altitude
+    public static final int CLIMATE_CHANNELS = 7;
+
+    // Weakest temperature fall per metre above the regional surface, in degrees C
+    static final float LAPSE_MIN = 0.0055f;
+
     private float[] computeClimate(int i1, int j1, int i2, int j2,
                                     float[] elevFlat, int H, int W) {
         int lc = LATENT_COMPRESSION;
@@ -552,9 +562,10 @@ public final class WorldPipeline implements AutoCloseable {
             float[][] full = to2D(coarseMap[ch], cH, cW);
             centralCoarse[ch] = cropArray(full, cenPad, cenPad, cenH, cenW);
         }
+        float[][] centralElev = cropArray(to2D(coarseElev, cH, cW), cenPad, cenPad, cenH, cenW);
 
         // Bilinear upsample to native resolution
-        float[] climate = new float[6 * H * W];
+        float[] climate = new float[CLIMATE_CHANNELS * H * W];
         for (int r = 0; r < H; r++) {
             // fractional index into lbt/centralCoarse arrays (matches Python's u = (ii+0.5)/S - ci1 + 0.5)
             float gridY    = (i1 + r + 0.5f) / S - ci1 + 0.5f;
@@ -565,14 +576,18 @@ public final class WorldPipeline implements AutoCloseable {
 
                 float tBase = bilinearSample2D(lbt[0], lH, lW, gridY, gridX);
                 float beta  = bilinearSample2D(lbt[1], lH, lW, gridY, gridX);
-                float tempReal = tBase + beta * Math.max(0f, elevFlat[r * W + c]);
+                float alt = Math.max(0f, elevFlat[r * W + c]);
+                float regionalAlt = bilinearSample2D(centralElev, cenH, cenW, cenGridY, cenGridX);
+                float lapse = Math.min(beta, -LAPSE_MIN);
+                float tempReal = tBase + beta * alt + (lapse - beta) * (alt - regionalAlt);
 
                 climate[r * W + c]             = tempReal;
                 climate[H * W + r * W + c]     = bilinearSample2D(centralCoarse[3], cenH, cenW, cenGridY, cenGridX);
                 climate[2 * H * W + r * W + c] = bilinearSample2D(centralCoarse[4], cenH, cenW, cenGridY, cenGridX);
                 climate[3 * H * W + r * W + c] = bilinearSample2D(centralCoarse[5], cenH, cenW, cenGridY, cenGridX);
-                climate[4 * H * W + r * W + c] = beta;
+                climate[4 * H * W + r * W + c] = lapse;
                 climate[5 * H * W + r * W + c] = bilinearSample2D(centralCoarse[2], cenH, cenW, cenGridY, cenGridX);
+                climate[6 * H * W + r * W + c] = regionalAlt;
             }
         }
         return climate;
@@ -638,12 +653,9 @@ public final class WorldPipeline implements AutoCloseable {
              + wy*(1-wx)*src[y1][x0] + wy*wx*src[y1][x1];
     }
 
-    private static final boolean DISK_CACHE_ENABLED =
-            !"false".equals(System.getProperty("terradiff.diskCache"));
-
     private static volatile Path cacheRootOverride;
 
-    // Set from the world-load hook so the cache lives beside the save it belongs to
+    // Set from the world-load hook to the save directory
     public static void setCacheRoot(Path worldDir) {
         cacheRootOverride = worldDir;
     }
@@ -657,9 +669,6 @@ public final class WorldPipeline implements AutoCloseable {
             diskCache = null;
         }
         tileStore.setDiskCache(null);
-        if (!DISK_CACHE_ENABLED) {
-            return;
-        }
         try {
             Path base = cacheRootOverride != null ? cacheRootOverride : PlatformPaths.gameDir();
             Path root = base.resolve("terradiff-cache").resolve(Long.toUnsignedString(seed));

@@ -1,4 +1,4 @@
-package com.github.xandergos.terraindiffusionmc.mixin;
+package com.github.xandergos.terraindiffusionmc.mixin.ales;
 
 import net.minecraft.core.Holder;
 import org.spongepowered.asm.mixin.Mixin;

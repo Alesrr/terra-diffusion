@@ -82,6 +82,8 @@ public class TerrainDiffusionBiomeSource extends BiomeSource {
                     entry((short) 19, this.biomeLookup.getOrThrow(Biomes.WINDSWEPT_HILLS)),
                     entry((short) 23, this.biomeLookup.getOrThrow(Biomes.JUNGLE)),
                     entry((short) 26, this.biomeLookup.getOrThrow(Biomes.BADLANDS)),
+                    entry((short) 27, this.biomeLookup.getOrThrow(Biomes.WOODED_BADLANDS)),
+                    entry((short) 28, this.biomeLookup.getOrThrow(Biomes.ERODED_BADLANDS)),
                     entry((short) 29, this.biomeLookup.getOrThrow(Biomes.MEADOW)),
                     entry((short) 31, this.biomeLookup.getOrThrow(Biomes.GROVE)),
                     entry((short) 32, this.biomeLookup.getOrThrow(Biomes.SNOWY_SLOPES)),
@@ -91,6 +93,14 @@ public class TerrainDiffusionBiomeSource extends BiomeSource {
                     entry((short) 44, this.biomeLookup.getOrThrow(Biomes.OCEAN)),
                     entry((short) 46, this.biomeLookup.getOrThrow(Biomes.COLD_OCEAN)),
                     entry((short) 48, this.biomeLookup.getOrThrow(Biomes.FROZEN_OCEAN)),
+                    entry((short) 38, this.biomeLookup.getOrThrow(Biomes.BEACH)),
+                    entry((short) 39, this.biomeLookup.getOrThrow(Biomes.SNOWY_BEACH)),
+                    entry((short) 40, this.biomeLookup.getOrThrow(Biomes.STONY_SHORE)),
+                    entry((short) 42, this.biomeLookup.getOrThrow(Biomes.LUKEWARM_OCEAN)),
+                    entry((short) 43, this.biomeLookup.getOrThrow(Biomes.DEEP_LUKEWARM_OCEAN)),
+                    entry((short) 45, this.biomeLookup.getOrThrow(Biomes.DEEP_OCEAN)),
+                    entry((short) 47, this.biomeLookup.getOrThrow(Biomes.DEEP_COLD_OCEAN)),
+                    entry((short) 49, this.biomeLookup.getOrThrow(Biomes.DEEP_FROZEN_OCEAN)),
                     entry((short) 108, this.biomeLookup.getOrThrow(FOREST_SPARSE)),
                     entry((short) 115, this.biomeLookup.getOrThrow(TAIGA_SPARSE)),
                     entry((short) 116, this.biomeLookup.getOrThrow(SNOWY_TAIGA_SPARSE))
@@ -200,7 +210,7 @@ public class TerrainDiffusionBiomeSource extends BiomeSource {
         return found != null ? found : biomeIdMap.get((short) 1);
     }
 
-    // hundreds of scattered positions would run the model once per position
+    // Biome at a quart position; without generate it reads only cached tiles
     private Holder<Biome> biomeAt(int x, int y, int z, boolean generate) {
         // x, y, z are in quart coordinates (block / 4)
         int blockX = QuartPos.toBlock(x);
@@ -231,8 +241,7 @@ public class TerrainDiffusionBiomeSource extends BiomeSource {
         return biomeIdMap.get(data.biomeIds[localZ][localX]);
     }
 
-    private static final int MAX_SAMPLES =
-            Integer.parseInt(System.getProperty("terradiff.biomeSearchSamples", "40000"));
+    private static final int MAX_SAMPLES = 40000;
 
     // Rings outward in quart space, sweeping vertically
     private Pair<BlockPos, Holder<Biome>> search(int x, int minY, int maxY, int z, int radius,

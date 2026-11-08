@@ -4,124 +4,72 @@ import java.util.Arrays;
 
 public final class KarstHydrology {
 
-    public static final boolean ENABLED =
-            !"false".equals(System.getProperty("terradiff.karst"));
+    private static final int MARGIN_CELLS = 64;
+    private static final int H_STEP_CELLS = 6;
+    private static final float V_STEP_BLOCKS = 12f;
+    private static final int MAX_LEVELS = 48;
+    private static final int NEIGHBOURS = 18;
 
-    private static final int MARGIN_CELLS =
-            Integer.parseInt(System.getProperty("terradiff.karstMargin", "64"));
-    private static final int H_STEP_CELLS =
-            Integer.parseInt(System.getProperty("terradiff.karstStep", "6"));
-    private static final float V_STEP_BLOCKS =
-            Float.parseFloat(System.getProperty("terradiff.karstVStep", "12"));
-    private static final int MAX_LEVELS =
-            Integer.parseInt(System.getProperty("terradiff.karstLevels", "48"));
-    private static final int NEIGHBOURS =
-            Integer.parseInt(System.getProperty("terradiff.karstNeighbours", "18"));
-
-    private static final int BEDROCK_TOP_Y = -187;
     private static final int FLOOR_Y = DeepCaverns.TOP - 4;
-    private static final int KARST_MAX_Y =
-            Integer.parseInt(System.getProperty("terradiff.karstMaxY", "320"));
-    private static final float ROOF_BLOCKS =
-            Float.parseFloat(System.getProperty("terradiff.karstRoof", "18"));
+    private static final int KARST_MAX_Y = 320;
+    private static final float ROOF_BLOCKS = 18f;
 
-    private static final float WT_GRADIENT =
-            Float.parseFloat(System.getProperty("terradiff.karstGradient", "0.035"));
-    private static final float VADOSE_NEAR_BLOCKS =
-            Float.parseFloat(System.getProperty("terradiff.karstVadoseNear", "2"));
-    private static final float VADOSE_GROWTH =
-            Float.parseFloat(System.getProperty("terradiff.karstVadoseGrowth", "0.075"));
-    private static final float VADOSE_MAX_BLOCKS =
-            Float.parseFloat(System.getProperty("terradiff.karstVadoseMax", "72"));
-    private static final float NO_RIVER_WT_DROP =
-            Float.parseFloat(System.getProperty("terradiff.karstDryDrop", "48"));
+    private static final float WT_GRADIENT = 0.035f;
+    private static final float VADOSE_NEAR_BLOCKS = 2f;
+    private static final float VADOSE_GROWTH = 0.075f;
+    private static final float VADOSE_MAX_BLOCKS = 72f;
+    private static final float NO_RIVER_WT_DROP = 48f;
 
-    private static final float PHREATIC_ANISO =
-            Float.parseFloat(System.getProperty("terradiff.karstPhreaticAniso", "3.5"));
-    private static final float VADOSE_ANISO =
-            Float.parseFloat(System.getProperty("terradiff.karstVadoseAniso", "2.5"));
-    private static final float HORIZON_W =
-            Float.parseFloat(System.getProperty("terradiff.karstHorizon", "1.6"));
-    private static final float HORIZON_REACH =
-            Float.parseFloat(System.getProperty("terradiff.karstHorizonReach", "14"));
-    private static final float FRACTURE_W =
-            Float.parseFloat(System.getProperty("terradiff.karstFracture", "0.22"));
-    private static final float DEEP_W =
-            Float.parseFloat(System.getProperty("terradiff.karstDeep", "0.9"));
-    private static final float PHREATIC_DEPTH_BLOCKS =
-            Float.parseFloat(System.getProperty("terradiff.karstPhreaticDepth", "18"));
+    private static final float PHREATIC_ANISO = 3.5f;
+    private static final float VADOSE_ANISO = 2.5f;
+    private static final float HORIZON_W = 1.6f;
+    private static final float HORIZON_REACH = 14f;
+    private static final float FRACTURE_W = 0.22f;
+    private static final float DEEP_W = 0.9f;
+    private static final float PHREATIC_DEPTH_BLOCKS = 18f;
 
-    private static final int FOSSIL_LEVELS =
-            Integer.parseInt(System.getProperty("terradiff.karstFossilLevels", "2"));
-    private static final int DEEP_HORIZONS =
-            Integer.parseInt(System.getProperty("terradiff.karstDeepHorizons", "1"));
-    private static final float DEEP_HORIZON_SPACING =
-            Float.parseFloat(System.getProperty("terradiff.karstDeepSpacing", "45"));
-    private static final float CONTACT_OFFSET =
-            Float.parseFloat(System.getProperty("terradiff.karstContact", "6"));
-    private static final float FOSSIL_MIN_SPACING =
-            Float.parseFloat(System.getProperty("terradiff.karstFossilMin", "9"));
+    private static final int FOSSIL_LEVELS = 2;
+    private static final int DEEP_HORIZONS = 1;
+    private static final float DEEP_HORIZON_SPACING = 45f;
+    private static final float CONTACT_OFFSET = 6f;
+    private static final float FOSSIL_MIN_SPACING = 9f;
 
-    private static final float SPRING_MIN_ACC =
-            Float.parseFloat(System.getProperty("terradiff.karstSpringAcc", "4000"));
-    private static final float SINK_MIN_ACC =
-            Float.parseFloat(System.getProperty("terradiff.karstSinkAcc", "6"));
-    private static final float FILL_MIN_M =
-            Float.parseFloat(System.getProperty("terradiff.karstFillMin", "1.5"));
-    private static final int SINK_SEPARATION =
-            Integer.parseInt(System.getProperty("terradiff.karstSinkSep", "1"));
-    private static final int MAX_SINKS =
-            Integer.parseInt(System.getProperty("terradiff.karstMaxSinks", "40000"));
+    private static final float SPRING_MIN_ACC = 4000f;
+    private static final float SINK_MIN_ACC = 6f;
+    private static final float FILL_MIN_M = 1.5f;
+    private static final int SINK_SEPARATION = 1;
+    private static final int MAX_SINKS = 40000;
 
-    private static final int SINK_RATE =
-            Integer.parseInt(System.getProperty("terradiff.karstSinkRate", "420"));
+    private static final int SINK_RATE = 420;
 
-    private static final int DOLINE_COUNT =
-            Integer.parseInt(System.getProperty("terradiff.karstDolines", "4"));
-    private static final int DOLINE_SEPARATION =
-            Integer.parseInt(System.getProperty("terradiff.karstDolineSep", "40"));
-    private static final float DOLINE_R_TOP =
-            Float.parseFloat(System.getProperty("terradiff.karstDolineTop", "9"));
-    private static final float DOLINE_R_BOTTOM =
-            Float.parseFloat(System.getProperty("terradiff.karstDolineBottom", "3.5"));
-    private static final float DOLINE_EXTRA =
-            Float.parseFloat(System.getProperty("terradiff.karstDolineExtra", "8"));
-    private static final float DOLINE_WATER_CLEARANCE =
-            Float.parseFloat(System.getProperty("terradiff.karstDolineClearance", "40"));
-    private static final float DOLINE_FLAT =
-            Float.parseFloat(System.getProperty("terradiff.karstDolineFlat", "14"));
+    private static final int DOLINE_COUNT = 4;
+    private static final int DOLINE_SEPARATION = 40;
+    private static final float DOLINE_R_TOP = 9f;
+    private static final float DOLINE_R_BOTTOM = 3.5f;
+    private static final float DOLINE_EXTRA = 8f;
+    private static final float DOLINE_WATER_CLEARANCE = 40f;
+    private static final float DOLINE_FLAT = 14f;
 
     private static final float SINK_DROP_BLOCKS = 14f;
     private static final float SPRING_DROP_BLOCKS = 4f;
 
-    private static final float R_MIN =
-            Float.parseFloat(System.getProperty("terradiff.karstRMin", "7.2"));
-    private static final float R_GAIN =
-            Float.parseFloat(System.getProperty("terradiff.karstRGain", "2.4"));
-    private static final float R_MAX =
-            Float.parseFloat(System.getProperty("terradiff.karstRMax", "9.5"));
+    private static final float R_MIN = 7.2f;
+    private static final float R_GAIN = 2.4f;
+    private static final float R_MAX = 9.5f;
     private static final float ACC_REF = 50f;
 
-    private static final int SUBDIVISIONS =
-            Integer.parseInt(System.getProperty("terradiff.karstSubdiv", "3"));
-    private static final float WANDER =
-            Float.parseFloat(System.getProperty("terradiff.karstWander", "0.45"));
-    private static final float TAPER_BLOCKS =
-            Float.parseFloat(System.getProperty("terradiff.karstTaper", "40"));
-    private static final int DEADEND_RATE =
-            Integer.parseInt(System.getProperty("terradiff.karstDeadends", "55"));
-    private static final float DEADEND_FLOW =
-            Float.parseFloat(System.getProperty("terradiff.karstDeadendFlow", "8"));
+    private static final int SUBDIVISIONS = 3;
+    private static final float WANDER = 0.45f;
+    private static final float TAPER_BLOCKS = 40f;
+    private static final int DEADEND_RATE = 55;
+    private static final float DEADEND_FLOW = 8f;
     private static final int MAX_SEGMENTS = 600000;
 
-    private static final float JITTER =
-            Float.parseFloat(System.getProperty("terradiff.karstJitter", "0.40"));
+    private static final float JITTER = 0.40f;
 
-    private static final float KEYHOLE_MIN_R =
-            Float.parseFloat(System.getProperty("terradiff.karstKeyholeMinR", "2.5"));
+    private static final float KEYHOLE_MIN_R = 2.5f;
 
-    private static final float VADOSE_ASPECT =
-            Float.parseFloat(System.getProperty("terradiff.karstVadoseAspect", "1.45"));
+    private static final float VADOSE_ASPECT = 1.45f;
 
     private static final float NATIVE_RES = 30f;
 
@@ -144,31 +92,21 @@ public final class KarstHydrology {
     private KarstHydrology() {
     }
 
-    private static final boolean RIVER_UNDER =
-            !"false".equals(System.getProperty("terradiff.riverUnder"));
+    private static final float UNDER_MIN_PERCH = 40f;
 
-    // Blocks the water must sit below the ground before the reach is routed underground
-    private static final float UNDER_MIN_PERCH =
-            Float.parseFloat(System.getProperty("terradiff.riverUnderPerch", "40"));
-
-    private static final float UNDER_R_MIN =
-            Float.parseFloat(System.getProperty("terradiff.riverUnderRMin", "4.5"));
-    private static final float UNDER_R_MAX =
-            Float.parseFloat(System.getProperty("terradiff.riverUnderRMax", "9.0"));
+    private static final float UNDER_R_MIN = 4.5f;
+    private static final float UNDER_R_MAX = 9.0f;
 
     // Headroom above the water line, as a share of the passage's vertical radius
-    private static final int MAX_RUN_CELLS =
-            Integer.parseInt(System.getProperty("terradiff.riverUnderMaxRun", "400"));
+    private static final int MAX_RUN_CELLS = 400;
 
-    private static final float UNDER_HEADROOM =
-            Float.parseFloat(System.getProperty("terradiff.riverUnderHeadroom", "0.30"));
+    private static final float UNDER_HEADROOM = 0.30f;
 
     // Routes a river underground wherever its solved level runs far below the ground
     private static void emitUnderground(Emitter em, float[] elev, boolean[] channel, float[] water,
                                         float[] widthM, int[] down, int grid,
                                         int windowI, int windowJ, int k0, int kn,
                                         float blocksPerCell, float blockM, short[] groundY) {
-        int runs = 0, emitted = 0, abandoned = 0;
         int[] chain = new int[MAX_RUN_CELLS + 2];
 
         for (int u = 1; u < kn - 1; u++) {
@@ -195,12 +133,8 @@ public final class KarstHydrology {
                     }
                     at = next;
                 }
-                if (!closed) {
-                    abandoned++;
-                    continue;
-                }
+                if (!closed) continue;
 
-                runs++;
                 for (int k = 0; k + 1 < len; k++) {
                     int a = chain[k], b = chain[k + 1];
                     float r = widthM[a] / blockM * 0.5f;
@@ -214,20 +148,14 @@ public final class KarstHydrology {
                     em.addRiver(ax, toY(water[a], blockM) + drop, az,
                             bx, toY(water[b], blockM) + drop, bz,
                             r, r, drop, KarstNetwork.ZONE_RIVER);
-                    emitted++;
                 }
-                // The shafts go on the DRY side of each junction
+                // Shafts go on the dry side of each junction
                 raiseShaft(em, chain[1], grid, k0, kn, windowI, windowJ, blocksPerCell, blockM,
                         water, widthM, groundY);
                 raiseShaft(em, chain[len - 2], grid, k0, kn, windowI, windowJ, blocksPerCell,
                         blockM, water, widthM, groundY);
             }
-        }
-        if (Boolean.getBoolean("terradiff.diag")) {
-            System.err.printf("diag underground river: %d sinking reaches (%d segments), "
-                    + "%d dropped for never resurfacing%n", runs, emitted, abandoned);
-        }
-    }
+        }    }
 
     private static float perchOf(float[] elev, float[] water, int i, float blockM) {
         return (elev[i] - water[i]) / blockM;
@@ -262,30 +190,6 @@ public final class KarstHydrology {
                 KarstNetwork.ZONE_RIVER_SHAFT);
     }
 
-    // Whether the neighbour on the given side is itself underground, so a shaft is only raised where
-    private static boolean submerged(float[] elev, float[] water, boolean[] channel, int[] down,
-                                     int grid, int i, float blockM, boolean upstream) {
-        if (upstream) {
-            int r = i / grid, c = i % grid;
-            for (int dr = -1; dr <= 1; dr++) {
-                for (int dc = -1; dc <= 1; dc++) {
-                    if (dr == 0 && dc == 0) continue;
-                    int j = (r + dr) * grid + (c + dc);
-                    if (j < 0 || j >= channel.length || !channel[j] || Float.isNaN(water[j])) continue;
-                    int jd = down[j];
-                    if (jd != i) continue;
-                    if ((elev[j] - water[j]) / blockM >= UNDER_MIN_PERCH) return true;
-                }
-            }
-            return false;
-        }
-        int d = down[i];
-        if (d < 0 || d == i || d >= channel.length || !channel[d] || Float.isNaN(water[d])) {
-            return false;
-        }
-        return (elev[d] - water[d]) / blockM >= UNDER_MIN_PERCH;
-    }
-
     private static int toY(float metres, float blockM) {
         if (metres >= 0f) return (int) (metres / blockM) + 63;
         float depthBlocks = -metres / blockM;
@@ -299,8 +203,6 @@ public final class KarstHydrology {
                                      float[] fillDepth, float[] water, float[] lake,
                                      float[] widthM, int[] down,
                                      int regionPx, int marginPx, float blockM) {
-        if (!ENABLED) return KarstNetwork.EMPTY;
-
         final float blocksPerCell = NATIVE_RES / blockM;
         final int km = Math.min(MARGIN_CELLS, marginPx);
         final int k0 = marginPx - km;
@@ -311,7 +213,7 @@ public final class KarstHydrology {
         final int nxz = kn / hs;
         if (nxz < 4) return KarstNetwork.EMPTY;
 
-        // ground and water table over the karst window
+        // Ground and water table over the karst window
         short[] groundY = new short[kn * kn];
         float[] srcY = new float[kn * kn];
         float[] dist = new float[kn * kn];
@@ -360,7 +262,7 @@ public final class KarstHydrology {
             wt[i] = (short) Math.round(v);
         }
 
-        // lattice
+        // Lattice
         int[] colCell = new int[nxz * nxz];
         short[] colSurf = new short[nxz * nxz];
         short[] colWt = new short[nxz * nxz];
@@ -407,7 +309,7 @@ public final class KarstHydrology {
 
         LongHeap heap = new LongHeap(Math.max(1024, nodes / 8));
 
-        // springs
+        // Springs
         int[] springLevel = new int[nxz * nxz];
         Arrays.fill(springLevel, -1);
         int springCount = 0;
@@ -464,21 +366,19 @@ public final class KarstHydrology {
 
         // Fracture direction per column and horizontal step, shared by every level
         float[] fracCos = null, fracSin = null;
-        if (FRACTURE_W > 0f) {
-            fracCos = new float[nxz * nxz * 9];
-            fracSin = new float[nxz * nxz * 9];
-            for (int col = 0; col < nxz * nxz; col++) {
-                int cu = col / nxz, cv = col % nxz;
-                for (int h = 0; h < 9; h++) {
-                    int nu = cu + h / 3 - 1, nv = cv + h % 3 - 1;
-                    if (nu < 0 || nv < 0 || nu >= nxz || nv >= nxz) continue;
-                    int ncol = nu * nxz + nv;
-                    float midX = 0.5f * (colPosX[col] + colPosX[ncol]);
-                    float midZ = 0.5f * (colPosZ[col] + colPosZ[ncol]);
-                    float ang = FRACTURE_ANGLE.GetNoise(midX, midZ) * (float) Math.PI;
-                    fracCos[col * 9 + h] = (float) Math.cos(ang);
-                    fracSin[col * 9 + h] = (float) Math.sin(ang);
-                }
+        fracCos = new float[nxz * nxz * 9];
+        fracSin = new float[nxz * nxz * 9];
+        for (int col = 0; col < nxz * nxz; col++) {
+            int cu = col / nxz, cv = col % nxz;
+            for (int h = 0; h < 9; h++) {
+                int nu = cu + h / 3 - 1, nv = cv + h % 3 - 1;
+                if (nu < 0 || nv < 0 || nu >= nxz || nv >= nxz) continue;
+                int ncol = nu * nxz + nv;
+                float midX = 0.5f * (colPosX[col] + colPosX[ncol]);
+                float midZ = 0.5f * (colPosZ[col] + colPosZ[ncol]);
+                float ang = FRACTURE_ANGLE.GetNoise(midX, midZ) * (float) Math.PI;
+                fracCos[col * 9 + h] = (float) Math.cos(ang);
+                fracSin[col * 9 + h] = (float) Math.sin(ang);
             }
         }
 
@@ -523,27 +423,21 @@ public final class KarstHydrology {
                     cost = len * (1f + VADOSE_ANISO * (1f - vert));
                 }
 
-                if (HORIZON_W > 0f) {
-                    float t = hbest / HORIZON_REACH;
-                    if (t > 1f) t = 1f;
-                    cost += HORIZON_W * len * t;
-                }
+                float t = hbest / HORIZON_REACH;
+                if (t > 1f) t = 1f;
+                cost += HORIZON_W * len * t;
 
-                if (FRACTURE_W > 0f) {
-                    int h = col * 9 + (dU[e] + 1) * 3 + (dV[e] + 1);
-                    float ca = fracCos[h], sa = fracSin[h];
-                    float hx = ex / len, hz = ez / len;
-                    float a1 = Math.abs(hx * ca + hz * sa);
-                    float a2 = Math.abs(-hx * sa + hz * ca);
-                    float align = Math.max(a1, a2);
-                    cost += FRACTURE_W * len * (1f - align);
-                }
+                int h = col * 9 + (dU[e] + 1) * 3 + (dV[e] + 1);
+                float ca = fracCos[h], sa = fracSin[h];
+                float hx = ex / len, hz = ez / len;
+                float a1 = Math.abs(hx * ca + hz * sa);
+                float a2 = Math.abs(-hx * sa + hz * ca);
+                float align = Math.max(a1, a2);
+                cost += FRACTURE_W * len * (1f - align);
 
-                if (DEEP_W > 0f) {
-                    float limit = table - PHREATIC_DEPTH_BLOCKS;
-                    if (midY < limit) {
-                        cost += DEEP_W * len * (limit - midY) / PHREATIC_DEPTH_BLOCKS;
-                    }
+                float limit = table - PHREATIC_DEPTH_BLOCKS;
+                if (midY < limit) {
+                    cost += DEEP_W * len * (limit - midY) / PHREATIC_DEPTH_BLOCKS;
                 }
 
                 float nd = d + cost;
@@ -555,7 +449,7 @@ public final class KarstHydrology {
             }
         }
 
-        // sinks
+        // Sinks
         float[] colAcc = new float[nxz * nxz];
         boolean[] colDoline = new boolean[nxz * nxz];
         int[] colSinkLevel = new int[nxz * nxz];
@@ -624,7 +518,7 @@ public final class KarstHydrology {
 
         if (sinkCount == 0) return KarstNetwork.EMPTY;
 
-        // flow accumulation along the predecessor forest
+        // Flow accumulation along the predecessor forest
         float[] flow = new float[nodes];
         boolean[] onPath = new boolean[nodes];
         for (int s = 0; s < sinkCount; s++) {
@@ -641,26 +535,24 @@ public final class KarstHydrology {
         }
 
         int deadends = 0;
-        if (DEADEND_RATE > 0) {
-            for (int n = 0; n < nodes; n++) {
-                if (onPath[n] || nodeDist[n] >= Float.MAX_VALUE) continue;
-                if (((mix(n) >>> 1) & 1023) >= DEADEND_RATE) continue;
-                int col = n / K;
-                float y = FLOOR_Y + (n % K) * vstep;
-                float table = colWt[col];
-                float hbest = horizonDistance(y, table, colSurf[col]);
-                if (hbest > HORIZON_REACH * 1.5f) continue;
-                int at = n, guard = 0;
-                while (at >= 0 && !onPath[at] && guard++ < 512) {
-                    onPath[at] = true;
-                    flow[at] += DEADEND_FLOW;
-                    at = prev[at];
-                }
-                deadends++;
+        for (int n = 0; n < nodes; n++) {
+            if (onPath[n] || nodeDist[n] >= Float.MAX_VALUE) continue;
+            if (((mix(n) >>> 1) & 1023) >= DEADEND_RATE) continue;
+            int col = n / K;
+            float y = FLOOR_Y + (n % K) * vstep;
+            float table = colWt[col];
+            float hbest = horizonDistance(y, table, colSurf[col]);
+            if (hbest > HORIZON_REACH * 1.5f) continue;
+            int at = n, guard = 0;
+            while (at >= 0 && !onPath[at] && guard++ < 512) {
+                onPath[at] = true;
+                flow[at] += DEADEND_FLOW;
+                at = prev[at];
             }
+            deadends++;
         }
 
-        // emit
+        // Emit
         Emitter em = new Emitter();
         float regionMinX = regionJ * (float) regionPx * blocksPerCell;
         float regionMaxX = (regionJ + 1) * (float) regionPx * blocksPerCell;
@@ -702,7 +594,7 @@ public final class KarstHydrology {
 
                 float edge = Math.min(Math.min(mx - regionMinX, regionMaxX - mx),
                         Math.min(mz - regionMinZ, regionMaxZ - mz));
-                float fade = TAPER_BLOCKS <= 0f ? 1f : Math.min(1f, edge / TAPER_BLOCKS);
+                float fade = Math.min(1f, edge / TAPER_BLOCKS);
                 if (fade <= 0.05f) continue;
                 if (r * fade < 0.6f) continue;
 
@@ -729,38 +621,8 @@ public final class KarstHydrology {
             }
         }
 
-        if (Boolean.getBoolean("terradiff.diag")) {
-            float dmin = Float.MAX_VALUE, dmax = 0f;
-            double dsum = 0;
-            int seeded = 0;
-            for (int i = 0; i < kn * kn; i++) {
-                if (dist[i] == 0f) seeded++;
-                float v = dist[i] == Float.MAX_VALUE ? 99999f : dist[i] * blocksPerCell;
-                if (v < dmin) dmin = v;
-                if (v > dmax) dmax = v;
-                dsum += v;
-            }
-            int nw = 0, nl = 0;
-            for (int u = 0; u < kn; u++) {
-                int rw = (k0 + u) * grid + k0;
-                for (int v = 0; v < kn; v++) {
-                    if (!Float.isNaN(water[rw + v])) nw++;
-                    if (!Float.isNaN(lake[rw + v])) nl++;
-                }
-            }
-            System.err.printf("diag karst: non-NaN water %d, non-NaN lake %d, of %d cells%n", nw, nl, kn * kn);
-            System.err.printf("diag karst: water-seed cells %d of %d (%.1f%%), distance-to-water blocks min %.0f mean %.0f max %.0f%n",
-                    seeded, kn * kn, 100.0 * seeded / (kn * kn), dmin, dsum / (kn * kn), dmax);
-            float best = 0f;
-            for (int i = 0; i < sinkCount; i++) {
-                float w = dist[colCell[sinks[i] / K]] * blocksPerCell;
-                if (w > best) best = w;
-            }
-            System.err.printf("diag karst: %d sinks, furthest from water %.0f blocks%n", sinkCount, best);
-        }
-
         int dolines = 0;
-        if (DOLINE_COUNT > 0 && sinkCount > 0) {
+        if (sinkCount > 0) {
             final float[] sf = sinkFlow;
             Integer[] byFlow = new Integer[sinkCount];
             for (int i = 0; i < sinkCount; i++) byFlow[i] = i;
@@ -833,10 +695,8 @@ public final class KarstHydrology {
                 wtRaster[cu * wtNX + cv] = colWt[cu * nxz + cv];
             }
         }
-        if (RIVER_UNDER) {
-            emitUnderground(em, elev, channel, water, widthM, down, grid,
-                    windowI, windowJ, k0, kn, blocksPerCell, blockM, groundY);
-        }
+        emitUnderground(em, elev, channel, water, widthM, down, grid,
+                windowI, windowJ, k0, kn, blocksPerCell, blockM, groundY);
 
         int wtOriginX = Math.round(colX(windowJ, k0, 0, hs, blocksPerCell));
         int wtOriginZ = Math.round(colZ(windowI, k0, 0, hs, blocksPerCell));

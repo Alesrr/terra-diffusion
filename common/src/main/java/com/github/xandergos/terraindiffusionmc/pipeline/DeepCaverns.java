@@ -2,15 +2,9 @@ package com.github.xandergos.terraindiffusionmc.pipeline;
 
 public final class DeepCaverns {
 
-    public static final boolean ENABLED =
-            !"false".equals(System.getProperty("terradiff.deep"));
-
-    public static final int TOP =
-            Integer.parseInt(System.getProperty("terradiff.deepTop", "8"));
-    public static final int BOTTOM =
-            Integer.parseInt(System.getProperty("terradiff.deepBottom", "-184"));
-    public static final int LAVA_Y =
-            Integer.parseInt(System.getProperty("terradiff.deepLavaY", "-182"));
+    public static final int TOP = 8;
+    public static final int BOTTOM = -184;
+    public static final int LAVA_Y = -182;
 
     public static final int AIR = 0;
     public static final int WATER = 1;
@@ -18,62 +12,35 @@ public final class DeepCaverns {
 
     public static final float FAR = 4096f;
 
-    private static final int BANDS =
-            Integer.parseInt(System.getProperty("terradiff.deepBands", "4"));
-    private static final float SPACING =
-            Float.parseFloat(System.getProperty("terradiff.deepSpacing", "54"));
-    private static final float FIRST_FLOOR =
-            Float.parseFloat(System.getProperty("terradiff.deepFirstFloor", "-12"));
-    private static final float BAND_HEIGHT =
-            Float.parseFloat(System.getProperty("terradiff.deepBandHeight", "38"));
+    private static final int BANDS = 4;
+    private static final float SPACING = 54f;
+    private static final float FIRST_FLOOR = -12f;
+    private static final float BAND_HEIGHT = 38f;
 
-    private static final float FLOOR_RELIEF =
-            Float.parseFloat(System.getProperty("terradiff.deepFloorRelief", "12"));
-    private static final float FLOOR_DETAIL =
-            Float.parseFloat(System.getProperty("terradiff.deepFloorDetail", "2.5"));
+    private static final float FLOOR_RELIEF = 12f;
+    private static final float FLOOR_DETAIL = 2.5f;
 
-    private static final float ROOM_THRESHOLD =
-            Float.parseFloat(System.getProperty("terradiff.deepRoom", "0.32"));
-    private static final float LATERAL_K =
-            Float.parseFloat(System.getProperty("terradiff.deepLateral", "26"));
-    private static final float HEIGHT_MIN =
-            Float.parseFloat(System.getProperty("terradiff.deepHeightMin", "12"));
-    private static final float HEIGHT_MAX =
-            Float.parseFloat(System.getProperty("terradiff.deepHeightMax", "32"));
-    private static final float WALL_NOISE =
-            Float.parseFloat(System.getProperty("terradiff.deepWallNoise", "14"));
-    private static final float CEIL_NOISE =
-            Float.parseFloat(System.getProperty("terradiff.deepCeilNoise", "10"));
-    private static final float CHEESE_K =
-            Float.parseFloat(System.getProperty("terradiff.deepCheeseK", "22"));
-    private static final float CHEESE_YSQUASH =
-            Float.parseFloat(System.getProperty("terradiff.deepCheeseSquash", "1.5"));
-    private static final float REGION_BIAS =
-            Float.parseFloat(System.getProperty("terradiff.deepRegionBias", "0.35"));
-    private static final float CAP_SLOPE =
-            Float.parseFloat(System.getProperty("terradiff.deepCapSlope", "0.7"));
+    private static final float ROOM_THRESHOLD = 0.32f;
+    private static final float LATERAL_K = 26f;
+    private static final float HEIGHT_MIN = 12f;
+    private static final float HEIGHT_MAX = 32f;
+    private static final float WALL_NOISE = 14f;
+    private static final float CEIL_NOISE = 10f;
+    private static final float CHEESE_YSQUASH = 1.5f;
+    private static final float REGION_BIAS = 0.35f;
+    private static final float PILLAR_THRESHOLD = 0.60f;
+    private static final float PILLAR_K = 30f;
 
-    private static final float PILLAR_THRESHOLD =
-            Float.parseFloat(System.getProperty("terradiff.deepPillar", "0.60"));
-    private static final float PILLAR_K =
-            Float.parseFloat(System.getProperty("terradiff.deepPillarK", "30"));
+    private static final int LAKE_SEAL = 4;
 
-    private static final int LAKE_SEAL =
-            Integer.parseInt(System.getProperty("terradiff.deepLakeSeal", "4"));
+    // How far the cavern ceiling wanders below TOP
+    private static final float CONTACT_ROUGH = 6f;
 
-    // How far the cavern ceiling wanders below #TOP
-    private static final float CONTACT_ROUGH =
-            Float.parseFloat(System.getProperty("terradiff.deepContactRough", "6"));
+    private static final float LAKE_RISE = -2f;
 
-    private static final float LAKE_RISE =
-            Float.parseFloat(System.getProperty("terradiff.deepLakeRise", "-2"));
-
-    private static final float CHIM_THICK =
-            Float.parseFloat(System.getProperty("terradiff.deepChimney", "0.055"));
-    private static final float CHIM_K =
-            Float.parseFloat(System.getProperty("terradiff.deepChimneyK", "22"));
-    private static final float CHIM_YSQUASH =
-            Float.parseFloat(System.getProperty("terradiff.deepChimneySquash", "0.28"));
+    private static final float CHIM_THICK = 0.055f;
+    private static final float CHIM_K = 22f;
+    private static final float CHIM_YSQUASH = 0.28f;
 
     private static final int CHIM_STEP = 16;
     private static final int CHIM_SAMPLES = (TOP - BOTTOM) / CHIM_STEP + 2;
@@ -193,7 +160,7 @@ public final class DeepCaverns {
         return (o < p ? o : p) * CHIM_K;
     }
 
-    // Signed distance in blocks; negative inside a cavern, #FAR in solid rock
+    // Signed distance in blocks; negative inside a cavern, FAR in solid rock
     private static boolean lakeBed(Col c, int y) {
         for (int b = 0; b < BANDS; b++) {
             if (c.floor[b] >= c.lake[b]) continue;
@@ -203,12 +170,12 @@ public final class DeepCaverns {
     }
 
     public static float density(int x, int y, int z) {
-        if (!ENABLED || y > TOP || y < BOTTOM) return FAR;
+        if (y > TOP || y < BOTTOM) return FAR;
         Col c = column(x, z);
         if (y > c.topY) return FAR;
 
         float best = chimneyAt(c, y);
-        // A shaft must not punch through the bed of a lake it passes under: the water drains into
+        // Keeps shafts out of the beds of lakes above them
         if (best > 0f && lakeBed(c, y)) best = 0f;
 
         int band = -1;
@@ -235,9 +202,9 @@ public final class DeepCaverns {
         return best > 0f ? -best : FAR;
     }
 
-    // What fills an open cavern block: #AIR, #WATER or #LAVA
+    // What fills an open cavern block: AIR, WATER or LAVA
     public static int fluid(int x, int y, int z) {
-        if (!ENABLED || y > TOP || y < BOTTOM) return AIR;
+        if (y > TOP || y < BOTTOM) return AIR;
         if (y <= LAVA_Y) return LAVA;
         Col c = column(x, z);
         for (int b = 0; b < BANDS; b++) {

@@ -1,7 +1,7 @@
 package com.github.xandergos.terraindiffusionmc.world;
 
 import com.github.xandergos.terraindiffusionmc.config.TerrainDiffusionConfig;
-import com.github.xandergos.terraindiffusionmc.mixin.HolderReferenceAccessor;
+import com.github.xandergos.terraindiffusionmc.mixin.ales.HolderReferenceAccessor;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.mojang.serialization.JsonOps;

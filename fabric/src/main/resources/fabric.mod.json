@@ -1,11 +1,15 @@
 {
   "schemaVersion": 1,
-  "id": "terra-diffusion-compat",
+  "id": "terra_diffusion",
   "version": "${version}",
-  "name": "terra-diffusion-compat",
-  "description": "Terrain Diffusion in Minecraft, with Terralith biome and surface compatibility",
-  "authors": [],
-  "contact": {},
+  "name": "${mod_name}",
+  "description": "${description}",
+  "authors": [
+    "${mod_author}"
+  ],
+  "contact": {
+    "sources": "${mod_url}"
+  },
   "license": "MIT",
   "icon": "assets/terrain-diffusion-mc/icon.png",
   "environment": "*",

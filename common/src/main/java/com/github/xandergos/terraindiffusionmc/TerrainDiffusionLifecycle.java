@@ -70,7 +70,7 @@ public final class TerrainDiffusionLifecycle {
         registrar.register(TERRAIN_DIFFUSION_ID, TerrainDiffusionDensityFunction.CODEC);
     }
 
-    // Registers the features that stand in for another mod's own, through the active loader's
+    // Registers the features that stand in for other mods' own
     public static void registerFeatures(CodecRegistrar<Feature<?>> registrar) {
         registrar.register(ResourceLocation.fromNamespaceAndPath(MOD_ID, "tfmg_oil_deposit"),
                 TfmgCompat.OIL_DEPOSIT);

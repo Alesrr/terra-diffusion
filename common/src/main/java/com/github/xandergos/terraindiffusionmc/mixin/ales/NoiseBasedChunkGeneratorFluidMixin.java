@@ -1,4 +1,4 @@
-package com.github.xandergos.terraindiffusionmc.mixin;
+package com.github.xandergos.terraindiffusionmc.mixin.ales;
 
 import com.github.xandergos.terraindiffusionmc.world.TerrainDiffusionDensityFunction;
 import com.github.xandergos.terraindiffusionmc.world.TerrainWater;

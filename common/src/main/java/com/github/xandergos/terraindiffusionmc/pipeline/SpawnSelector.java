@@ -74,7 +74,7 @@ public final class SpawnSelector {
         return new BlockPos(0, heightmapY(0, 0), 0);
     }
 
-    // Scans the coarse tensor in order of increasing Chebyshev distance from the center, returning
+    // Scans the coarse tensor outward from the center for the first all-land pixel
     private static BlockPos findNearestLandPixel(FloatTensor coarse, int H, int W,
                                                   int ci0, int cj0, int scale) {
         // Center of the queried region in local (row, col) indices
@@ -112,7 +112,7 @@ public final class SpawnSelector {
         return null;
     }
 
-    // Returns true if the pixel at (row, col) and all 8 of its neighbors have a positive unnormalized
+    // True if the pixel at (row, col) and all 8 of its neighbours are land
     private static boolean isFullyOnLand(FloatTensor coarse, int row, int col, int H, int W) {
         for (int dr = -1; dr <= 1; dr++) {
             for (int dc = -1; dc <= 1; dc++) {

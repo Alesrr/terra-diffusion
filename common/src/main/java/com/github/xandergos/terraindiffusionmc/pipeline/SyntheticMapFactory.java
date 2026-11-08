@@ -10,7 +10,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-// Generates synthetic climate conditioning maps from Perlin noise quantile-matched to real
+// Generates synthetic climate conditioning maps from Perlin noise quantile-matched to real data
 public final class SyntheticMapFactory {
 
     private static final int N_CHANNELS = 5;

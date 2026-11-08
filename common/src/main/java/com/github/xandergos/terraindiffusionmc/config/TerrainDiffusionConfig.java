@@ -33,7 +33,7 @@ public final class TerrainDiffusionConfig {
     // Inference device: "cpu", "gpu", or "auto" (try GPU then fall back to CPU)
     public static String inferenceDevice() {
         String device = readString("inference.device", "gpu");
-        // On the CPU build "gpu" is meaningless (no dedicated GPU provider), so treat it as "auto":
+        // The CPU build treats "gpu" as "auto"
         if ("cpu".equals(BUILD_VARIANT)) {
             return "auto";
         }
@@ -73,6 +73,14 @@ public final class TerrainDiffusionConfig {
         return Math.max(1, Math.min(8, readInt("snow.max_layers_over_vegetation", 6)));
     }
 
+    public static int oceanRuinFloorY() {
+        return readInt("structures.ocean_ruin_floor_y", 40);
+    }
+
+    public static int shipwreckFloorY() {
+        return readInt("structures.shipwreck_floor_y", 55);
+    }
+
     public static boolean terralithEnabled() {
         return readBoolean("terralith.enabled", true);
     }
@@ -83,14 +91,6 @@ public final class TerrainDiffusionConfig {
 
     // Decoded model windows kept in memory, per tensor
     public static int tileCacheMb() {
-        String override = System.getProperty("terradiff.tileCacheMb");
-        if (override != null) {
-            try {
-                return Math.max(16, Integer.parseInt(override.trim()));
-            } catch (NumberFormatException ignored) {
-                // fall through to the config value
-            }
-        }
         return Math.max(16, readInt("tile_cache_mb", DEFAULT_TILE_CACHE_MB));
     }
 
@@ -137,6 +137,27 @@ public final class TerrainDiffusionConfig {
     // Radius of the slick an oil well leaves at the surface
     public static int tfmgWellPoolRadius() {
         return readInt("tfmg.oil_well_pool_radius", 8);
+    }
+
+    // Spacing, separation and frequency for a vanilla structure set in Terra Diffusion worlds, or null to keep its own
+    public static float[] structureSpacing(String set) {
+        String fallback = switch (set) {
+            case "ocean_monuments" -> "64,24,0.6";
+            case "ancient_cities" -> "64,24,1";
+            case "shipwrecks" -> "32,8,1";
+            case "villages" -> "40,12,1";
+            case "pillager_outposts" -> "40,12,0.2";
+            default -> "";
+        };
+        String value = readString("structures." + set, fallback);
+        String[] parts = value.split(",");
+        if (parts.length != 3) return null;
+        try {
+            return new float[]{Float.parseFloat(parts[0].trim()), Float.parseFloat(parts[1].trim()), Float.parseFloat(parts[2].trim())};
+        } catch (NumberFormatException e) {
+            System.err.println("Invalid structures." + set + ": " + value + ", keeping the datapack placement");
+            return null;
+        }
     }
 
     // Region side length in blocks

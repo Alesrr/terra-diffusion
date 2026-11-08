@@ -17,13 +17,14 @@ import org.slf4j.LoggerFactory;
 @Mod(TerrainDiffusionMc.FML_MOD_ID)
 public class TerrainDiffusionMc {
     public static final String MOD_ID = "terrain-diffusion-mc";
-    public static final String FML_MOD_ID = "terra_diffusion_compat";
+    public static final String FML_MOD_ID = "terra_diffusion";
     private static final Logger LOG = LoggerFactory.getLogger(TerrainDiffusionMc.class);
 
     public TerrainDiffusionMc(IEventBus modEventBus) {
         LOG.info("Initializing terrain-diffusion-mc for NeoForge");
         modEventBus.addListener(this::onRegister);
         TerrainDiffusionLifecycle.bootstrap(FMLPaths.CONFIGDIR.get(), FMLPaths.GAMEDIR.get());
+        StreamsCompat.init(modEventBus);
 
         NeoForge.EVENT_BUS.addListener(this::onServerStarting);
         NeoForge.EVENT_BUS.addListener(this::onLevelLoad);

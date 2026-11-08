@@ -14,7 +14,7 @@ public final class LaplacianUtils {
         return result;
     }
 
-    // laplacian_denoise(residual, lowres, sigma) with extrapolate=True: 1
+    // laplacian_denoise(residual, lowres, sigma) with extrapolate=True
     public static float[][] laplacianDenoise(float[][] residual, float[][] lowres, float sigma) {
         int H = residual.length, W = residual[0].length;
         int lH = lowres.length, lW = lowres[0].length;

@@ -7,14 +7,19 @@ import com.github.xandergos.terraindiffusionmc.config.TerrainDiffusionConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.io.BufferedOutputStream;
+import java.io.OutputStream;
 import java.nio.FloatBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Arrays;
 import java.util.EnumSet;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -36,9 +41,15 @@ public final class OnnxModel implements AutoCloseable {
     private static OnnxModel gpuSlotHolder = null;
     private static OrtSession activeGpuSession = null;
 
+    private static final String HALF_PRECISION_TAG = "fp16v1";
+
     private final OrtEnvironment env;
     private final byte[] optimizedModelBytes;
     private final String name;
+    private final long spatialSize;
+    private final long[] fixedBatches;
+    private final Map<List<Long>, OrtSession> fixedSessions = new HashMap<>();
+    private final boolean halfPrecision;
     private OrtSession cpuSession;    // non-null in CPU-only mode
     private OrtSession gpuSession;    // non-null when offload_models=false
 
@@ -55,11 +66,25 @@ public final class OnnxModel implements AutoCloseable {
     }
 
     public OnnxModel(Path modelFilePath, String name) {
+        this(modelFilePath, name, 0);
+    }
+
+    public OnnxModel(Path modelFilePath, String name, long spatialSize, long... fixedBatches) {
         this.name = name;
+        this.spatialSize = spatialSize;
+        this.fixedBatches = fixedBatches.clone();
+        Arrays.sort(this.fixedBatches);
         try {
             long start = System.currentTimeMillis();
             this.env = OrtEnvironment.getEnvironment(OrtLoggingLevel.ORT_LOGGING_LEVEL_ERROR);
             byte[] sourceModelBytes = Files.readAllBytes(modelFilePath);
+            byte[] halfPrecisionModelBytes = loadHalfPrecisionModel(sourceModelBytes, start);
+            if (halfPrecisionModelBytes != null) {
+                this.optimizedModelBytes = halfPrecisionModelBytes;
+                this.halfPrecision = true;
+                return;
+            }
+            this.halfPrecision = false;
             OptimizedModelLoadResult initialOptimizedModelLoadResult = optimizeModelAtRuntime(sourceModelBytes, false);
             byte[] loadedModelBytes;
             try {
@@ -115,6 +140,108 @@ public final class OnnxModel implements AutoCloseable {
             LOG.warn("Runtime ONNX optimization failed for '{}', using source model bytes: {}",
                     name, optimizationException.getMessage());
             return new OptimizedModelLoadResult(sourceModelBytes, optimizedModelPath, false);
+        }
+    }
+
+    private byte[] loadHalfPrecisionModel(byte[] sourceModelBytes, long startMillis) {
+        if (!halfPrecisionAvailable()) {
+            return null;
+        }
+        for (int attempt = 0; attempt < 2; attempt++) {
+            try {
+                byte[] modelBytes = halfPrecisionModelBytes(sourceModelBytes, attempt > 0);
+                long firstBatch = fixedBatches.length > 0 ? fixedBatches[0] : 1;
+                fixedSession(modelBytes, firstBatch, spatialSize, spatialSize);
+                if (TerrainDiffusionConfig.offloadModels()) {
+                    closeFixedSessions();
+                } else {
+                    for (long batch : fixedBatches) {
+                        fixedSession(modelBytes, batch, spatialSize, spatialSize);
+                    }
+                }
+                setResolvedProviderOnce("DirectML");
+                LOG.info("ONNX model '{}' loaded on GPU in half precision ({} KB) in {} ms",
+                        name, modelBytes.length / 1024, System.currentTimeMillis() - startMillis);
+                return modelBytes;
+            } catch (Throwable t) {
+                closeFixedSessions();
+                LOG.warn("Half precision {} for '{}': {}",
+                        attempt == 0 ? "failed, rebuilding" : "unavailable, using full precision", name, t.toString());
+            }
+        }
+        return null;
+    }
+
+    private boolean halfPrecisionAvailable() {
+        if ("cpu".equals(TerrainDiffusionConfig.inferenceDevice())) {
+            return false;
+        }
+        EnumSet<OrtProvider> providers = OrtEnvironment.getAvailableProviders();
+        return providers.contains(OrtProvider.DIRECT_ML) && !providers.contains(OrtProvider.CUDA);
+    }
+
+    private byte[] halfPrecisionModelBytes(byte[] sourceModelBytes, boolean rebuild) throws Exception {
+        String sourceModelHashPrefix = sha256Hex(sourceModelBytes).substring(0, 16);
+        Path cachedPath = ModelAssetManager.resolveAssetPath(OPTIMIZED_MODELS_DIR_NAME).resolve(
+                name + "-" + HALF_PRECISION_TAG + "-" + resolveOnnxRuntimeVersionTag() + "-" + sourceModelHashPrefix + ".onnx");
+        if (rebuild) {
+            Files.deleteIfExists(cachedPath);
+        } else if (Files.exists(cachedPath)) {
+            return Files.readAllBytes(cachedPath);
+        }
+        Files.createDirectories(cachedPath.getParent());
+        Path basicPath = cachedPath.resolveSibling(cachedPath.getFileName() + ".basic.tmp");
+        Path temporaryPath = cachedPath.resolveSibling(cachedPath.getFileName() + ".tmp");
+        try {
+            try (OrtSession.SessionOptions basicOptions = new OrtSession.SessionOptions()) {
+                basicOptions.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.BASIC_OPT);
+                basicOptions.setOptimizedModelFilePath(basicPath.toAbsolutePath().toString());
+                try (OrtSession ignored = env.createSession(sourceModelBytes, basicOptions)) {
+                }
+            }
+            byte[] basicModelBytes = Files.readAllBytes(basicPath);
+            try (OutputStream out = new BufferedOutputStream(Files.newOutputStream(temporaryPath), 1 << 20)) {
+                HalfPrecisionModel.convert(basicModelBytes, out);
+            }
+            Files.move(temporaryPath, cachedPath, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } finally {
+            Files.deleteIfExists(basicPath);
+            Files.deleteIfExists(temporaryPath);
+        }
+        LOG.info("Converted ONNX model '{}' to half precision", name);
+        return Files.readAllBytes(cachedPath);
+    }
+
+    private OrtSession fixedSession(byte[] modelBytes, long batch, long height, long width) throws OrtException {
+        List<Long> key = List.of(batch, height, width);
+        synchronized (fixedSessions) {
+            OrtSession session = fixedSessions.get(key);
+            if (session != null) {
+                return session;
+            }
+            try (OrtSession.SessionOptions options = new OrtSession.SessionOptions()) {
+                options.setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT);
+                options.setMemoryPatternOptimization(false);
+                options.setExecutionMode(OrtSession.SessionOptions.ExecutionMode.SEQUENTIAL);
+                options.setSymbolicDimensionValue("batch", batch);
+                if (spatialSize > 0) {
+                    options.setSymbolicDimensionValue("height", height);
+                    options.setSymbolicDimensionValue("width", width);
+                }
+                options.addDirectML(0);
+                session = env.createSession(modelBytes, options);
+            }
+            fixedSessions.put(key, session);
+            return session;
+        }
+    }
+
+    private void closeFixedSessions() {
+        synchronized (fixedSessions) {
+            for (OrtSession session : fixedSessions.values()) {
+                try { session.close(); } catch (OrtException ignored) {}
+            }
+            fixedSessions.clear();
         }
     }
 
@@ -219,6 +346,15 @@ public final class OnnxModel implements AutoCloseable {
 
     // Run the model with a flat float array for each named input
     public float[] run(Object[][] inputs) {
+        if (halfPrecision) {
+            if (!TerrainDiffusionConfig.offloadModels()) {
+                return runFixed(inputs);
+            }
+            synchronized (GPU_SLOT_LOCK) {
+                claimFixedSlot();
+                return runFixed(inputs);
+            }
+        }
         if (cpuSession != null) {
             return runWithSession(cpuSession, inputs);
         }
@@ -247,10 +383,70 @@ public final class OnnxModel implements AutoCloseable {
     private static final int GPU_SESSION_ATTEMPTS = 4;
     private static final long GPU_RETRY_BASE_MS = 250L;
 
-    // Evicts the current GPU session if this model doesn't hold the slot, then creates a fresh GPU
+    private float[] runFixed(Object[][] inputs) {
+        long[] shape = (long[]) inputs[0][2];
+        long batch = shape[0];
+        long target = batch;
+        for (long fixedBatch : fixedBatches) {
+            if (fixedBatch >= batch) {
+                target = fixedBatch;
+                break;
+            }
+        }
+        boolean spatial = spatialSize > 0 && shape.length == 4;
+        OrtSession session;
+        try {
+            session = fixedSession(optimizedModelBytes, target, spatial ? shape[2] : 0, spatial ? shape[3] : 0);
+        } catch (OrtException e) {
+            throw new RuntimeException("Failed to create GPU session for: " + name, e);
+        }
+        if (target == batch) {
+            return runWithSession(session, inputs);
+        }
+        float[] out = runWithSession(session, padBatch(inputs, batch, target));
+        return Arrays.copyOf(out, (int) (out.length / target * batch));
+    }
+
+    private static Object[][] padBatch(Object[][] inputs, long batch, long target) {
+        Object[][] padded = new Object[inputs.length][];
+        for (int k = 0; k < inputs.length; k++) {
+            float[] values = (float[]) inputs[k][1];
+            long[] shape = (long[]) inputs[k][2];
+            if (shape.length == 0 || shape[0] != batch) {
+                padded[k] = inputs[k];
+                continue;
+            }
+            int item = (int) (values.length / batch);
+            float[] grown = Arrays.copyOf(values, (int) (item * target));
+            for (int row = (int) batch; row < target; row++) {
+                System.arraycopy(values, (int) ((batch - 1) * item), grown, row * item, item);
+            }
+            long[] grownShape = shape.clone();
+            grownShape[0] = target;
+            padded[k] = new Object[]{inputs[k][0], grown, grownShape};
+        }
+        return padded;
+    }
+
+    private void claimFixedSlot() {
+        if (gpuSlotHolder == this) return;
+        if (activeGpuSession != null) {
+            try { activeGpuSession.close(); } catch (OrtException ignored) {}
+            activeGpuSession = null;
+        }
+        if (gpuSlotHolder != null) {
+            gpuSlotHolder.closeFixedSessions();
+        }
+        gpuSlotHolder = this;
+    }
+
+    // Takes the GPU slot from the model holding it and opens this model's session
     private void claimGpuSlot() {
         if (gpuSlotHolder == this) return;
 
+        if (gpuSlotHolder != null) {
+            gpuSlotHolder.closeFixedSessions();
+        }
         if (activeGpuSession != null) {
             LOG.debug("Evicting '{}' from GPU, loading '{}'",
                     gpuSlotHolder != null ? gpuSlotHolder.name : "?", name);
@@ -306,7 +502,7 @@ public final class OnnxModel implements AutoCloseable {
 
         try {
             OrtCUDAProviderOptions cudaOpts = new OrtCUDAProviderOptions(0);
-            // Only grow the BFC arena by exactly what is needed, never pre-allocate
+            // Grows the BFC arena by exactly what is needed
             cudaOpts.add("arena_extend_strategy", "kSameAsRequested");
             // Heuristic: fast startup, no exhaustive benchmarking, workspace-efficient
             cudaOpts.add("cudnn_conv_algo_search", "HEURISTIC");
@@ -386,12 +582,15 @@ public final class OnnxModel implements AutoCloseable {
     @Override
     public void close() {
         synchronized (GPU_SLOT_LOCK) {
-            if (gpuSlotHolder == this && activeGpuSession != null) {
-                try { activeGpuSession.close(); } catch (OrtException ignored) {}
-                activeGpuSession = null;
+            if (gpuSlotHolder == this) {
+                if (activeGpuSession != null) {
+                    try { activeGpuSession.close(); } catch (OrtException ignored) {}
+                    activeGpuSession = null;
+                }
                 gpuSlotHolder = null;
             }
         }
+        closeFixedSessions();
         if (cpuSession != null) {
             try { cpuSession.close(); } catch (OrtException ignored) {}
             cpuSession = null;

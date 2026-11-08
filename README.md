@@ -105,6 +105,10 @@ snow.depth_scaling=true
 # Snow Real Magic's accumulation.maxLayers. Ignored when Snow Real Magic is not installed.
 snow.max_layers_over_vegetation=6
 
+# Highest sea floor (block Y) an ocean ruin or a shipwreck may sit on.
+structures.ocean_ruin_floor_y=40
+structures.shipwreck_floor_y=55
+
 # Place Terralith's biomes when Terralith is installed.
 terralith.enabled=true
 

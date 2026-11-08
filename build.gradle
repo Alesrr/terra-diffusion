@@ -309,7 +309,7 @@ subprojects { subproject ->
 
     subproject.plugins.withId('net.neoforged.moddev') {
         if (subproject.name in rootProject.ext.terrainDiffusionLoaderProjects) {
-            // ModDevGradle creates additionalRuntimeClasspath only after its NeoForge
+            // Adds ONNX Runtime once ModDevGradle has created its NeoForge configurations
             subproject.afterEvaluate {
                 subproject.dependencies {
                     String buildVariant = subproject.ext.terrainDiffusionBuildVariant

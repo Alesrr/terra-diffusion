@@ -5,18 +5,15 @@ public final class CaveBiomes {
 
     public static final int NONE = -1;
 
-    public static final float MIN_DEPTH =
-            Float.parseFloat(System.getProperty("terradiff.caveMinDepth", "0.15"));
+    public static final float MIN_DEPTH = 0.15f;
 
-    // Depth is surface-relative, but a tall mountain must not drag the deep zones up with it
-    private static final int SURFACE_CAP =
-            Integer.parseInt(System.getProperty("terradiff.caveSurfaceCap", "128"));
+    // Surface height above which cave depth stops following the surface
+    private static final int SURFACE_CAP = 128;
 
     private static final float DEPTH_SPAN = 128f;
 
     // How far outside its climate box an entry may still be chosen
-    private static final long TOLERANCE = (long) (Float.parseFloat(
-            System.getProperty("terradiff.caveTolerance", "0.2")) * 10000.0F);
+    private static final long TOLERANCE = (long) (0.2f * 10000.0F);
 
     public static final String[] IDS = {
             "minecraft:lush_caves",
@@ -142,8 +139,7 @@ public final class CaveBiomes {
         return over > 0L ? over : Math.max(under, 0L);
     }
 
-    private static final float DEEP_FALLBACK_DEPTH =
-            Float.parseFloat(System.getProperty("terradiff.caveDeepFallback", "1.0"));
+    private static final float DEEP_FALLBACK_DEPTH = 1.0f;
 
     public static int select(float t, float h, float c, float e, float w, float depth,
                              boolean terralith) {

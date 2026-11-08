@@ -13,8 +13,7 @@ public final class KarstNetwork {
 
     public static final float FAR = 4096f;
 
-    private static final float FLOOR_CUT =
-            Float.parseFloat(System.getProperty("terradiff.karstFloorCut", "0.35"));
+    private static final float FLOOR_CUT = 0.35f;
 
     public static final KarstNetwork EMPTY = new KarstNetwork();
 
@@ -39,6 +38,13 @@ public final class KarstNetwork {
     // Endpoint bounds per segment, for skipping segments that cannot be nearest
     final float[] loX, hiX, loY, hiY, loZ, hiZ;
 
+    // The same xz cells split into vertical slabs, for queries that only need the sign
+    static final int SLAB = 16;
+    static final float SIGN_LIMIT = 1f;
+    final int slabOrigin, slabs;
+    final int[] slabStart;
+    final int[] slabItems;
+
     private KarstNetwork() {
         this.count = 0;
         this.ax = this.ay = this.az = this.bx = this.by = this.bz = new float[0];
@@ -56,6 +62,10 @@ public final class KarstNetwork {
         this.wtStep = 1;
         this.wtNX = this.wtNZ = 0;
         this.wtY = new short[0];
+        this.slabOrigin = 0;
+        this.slabs = 0;
+        this.slabStart = new int[1];
+        this.slabItems = new int[0];
     }
 
     KarstNetwork(int count, float[] ax, float[] ay, float[] az,
@@ -126,6 +136,48 @@ public final class KarstNetwork {
                 }
             }
         }
+
+        float yLo = Float.MAX_VALUE, yHi = -Float.MAX_VALUE;
+        for (int s = 0; s < count; s++) {
+            yLo = Math.min(yLo, Math.min(ay[s], by[s]) - rv[s] - 1f);
+            yHi = Math.max(yHi, Math.max(ay[s], by[s]) + rv[s] + 1f);
+        }
+        this.slabOrigin = count == 0 ? 0 : Math.floorDiv((int) Math.floor(yLo), SLAB) * SLAB;
+        this.slabs = count == 0 ? 0 : Math.floorDiv((int) Math.floor(yHi) - slabOrigin, SLAB) + 1;
+        int slots = cells * slabs;
+        int[] slabCounts = new int[slots + 1];
+        int[] items = new int[0];
+        for (int pass = 0; pass < 2; pass++) {
+            int[] at = pass == 0 ? null : new int[slots];
+            for (int s = 0; s < count; s++) {
+                int c0 = cellX(Math.min(ax[s], bx[s]) - rh[s] - 1f);
+                int c1 = cellX(Math.max(ax[s], bx[s]) + rh[s] + 1f);
+                int d0 = cellZ(Math.min(az[s], bz[s]) - rh[s] - 1f);
+                int d1 = cellZ(Math.max(az[s], bz[s]) + rh[s] + 1f);
+                int k0 = slabOf(Math.min(ay[s], by[s]) - rv[s] - 1f);
+                int k1 = slabOf(Math.max(ay[s], by[s]) + rv[s] + 1f);
+                for (int c = c0; c <= c1; c++) {
+                    for (int d = d0; d <= d1; d++) {
+                        if (c < 0 || d < 0 || c >= nx || d >= nz) continue;
+                        for (int k = k0; k <= k1; k++) {
+                            int slot = (d * nx + c) * slabs + k;
+                            if (pass == 0) slabCounts[slot + 1]++;
+                            else items[slabCounts[slot] + at[slot]++] = s;
+                        }
+                    }
+                }
+            }
+            if (pass == 0) {
+                for (int i = 0; i < slots; i++) slabCounts[i + 1] += slabCounts[i];
+                items = new int[slabCounts[slots]];
+            }
+        }
+        this.slabStart = slabCounts;
+        this.slabItems = items;
+    }
+
+    private int slabOf(float y) {
+        return Math.floorDiv((int) Math.floor(y) - slabOrigin, SLAB);
     }
 
     private int cellX(float x) {
@@ -218,6 +270,20 @@ public final class KarstNetwork {
         return best;
     }
 
+    // Equal to density() wherever that is zero or negative; elsewhere some positive value
+    public float densitySign(float x, float y, float z, boolean dolinesOnly) {
+        if (count == 0) return FAR;
+        int c = cellX(x);
+        int d = cellZ(z);
+        if (c < 0 || d < 0 || c >= nx || d >= nz) return FAR;
+        int k = slabOf(y);
+        if (k < 0 || k >= slabs) return FAR;
+        int slot = (d * nx + c) * slabs + k;
+        int from = slabStart[slot], to = slabStart[slot + 1];
+        if (from == to) return FAR;
+        return nearest(x, y, z, dolinesOnly, SIGN_LIMIT, slabItems, from, to);
+    }
+
     private float density(float x, float y, float z, boolean dolinesOnly, float limit) {
         if (count == 0) return FAR;
         int c = cellX(x);
@@ -227,11 +293,14 @@ public final class KarstNetwork {
         int from = cellStart[cell], to = cellStart[cell + 1];
         if (from == to) return FAR;
         if (y < cellYMin[cell] || y > cellYMax[cell]) return FAR;
+        return nearest(x, y, z, dolinesOnly, limit, cellItems, from, to);
+    }
 
+    private float nearest(float x, float y, float z, boolean dolinesOnly, float limit, int[] items, int from, int to) {
         float slack = slack(x, y, z);
         float best = FAR;
         for (int k = from; k < to; k++) {
-            int s = cellItems[k];
+            int s = items[k];
             if (dolinesOnly && zone[s] != ZONE_DOLINE) continue;
             if (rh[s] > 0.01f && rv[s] > 0.01f
                     && lowerBound(s, x, y, z, rh[s], rv[s]) > Math.min(best, limit) + slack) continue;
@@ -258,7 +327,7 @@ public final class KarstNetwork {
         return best;
     }
 
-    // Surface height of the underground river at this position, or Float#NEGATIVE_INFINITY where none
+    // Surface height of the underground river at this position, or negative infinity where none
     public float riverWaterY(float x, float y, float z) {
         if (count == 0) return Float.NEGATIVE_INFINITY;
         int c = cellX(x);

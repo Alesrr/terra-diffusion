@@ -1,0 +1,10 @@
+{
+  "type": "lithostitched:remove_features",
+  "predicate": {
+    "type": "lithostitched:mod_loaded",
+    "mod_id": "terralith"
+  },
+  "biomes": "terralith:haze_mountain",
+  "features": "terralith:mountains/misty/tuff_lake",
+  "step": "underground_ores"
+}

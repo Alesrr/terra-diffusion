@@ -9,7 +9,12 @@ public final class TerrainSample {
 
     public float slope;
 
+    public float seaShare;
+
     public float temp;
+
+    // Temperature at the smoothed local surface, used for the arid zone edges
+    public float zoneTemp;
 
     public float tReg, relElev, moist, frost;
 

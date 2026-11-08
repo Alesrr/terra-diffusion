@@ -8,8 +8,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.util.Arrays;
-import java.util.Iterator;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Random;
 import java.util.Comparator;
@@ -33,28 +31,16 @@ public final class LocalTerrainProvider {
     private static final FastNoiseLite ELEV_NOISE_COARSE = makeFnl(99999, 1f/24f, 3, 2f, 0.5f);
     private static final FastNoiseLite ELEV_NOISE_FINE   = makeFnl(88888, 1f/6f, 2, 2f, 0.6f);
 
-    private static final FastNoiseLite ELEV_DITHER       = makeFnl(77777, 1f/1.7f, 1, 2f, 0.5f);
+    private static final FastNoiseLite ELEV_DITHER       = makeFnl(77777,
+            1f / 10f, 2, 2f, 0.5f);
 
-    private static final float DITHER_BAND_GRAD =
-            Float.parseFloat(System.getProperty("terradiff.ditherBandGrad", "0.125"));
+    private static final float DITHER_BAND_GRAD = 0.125f;
 
-    private static final float DETAIL_FLOOR_BLOCKS =
-            Float.parseFloat(System.getProperty("terradiff.ditherFloor", "0.20"));
+    private static final float DETAIL_FLOOR_BLOCKS = 0.20f;
 
-    private static final float AMP_COARSE =
-            Float.parseFloat(System.getProperty("terradiff.ampCoarse", "100"));
+    private static final float AMP_COARSE = 100f;
 
-    private static final float AMP_FINE =
-            Float.parseFloat(System.getProperty("terradiff.ampFine", "70"));
-
-    private static final float BANK_FRINGE_BLOCKS =
-            Float.parseFloat(System.getProperty("terradiff.bankFringe", "8.0"));
-
-    private static final float RELAX_MAX_DROP =
-            Float.parseFloat(System.getProperty("terradiff.relaxMaxDrop", "99"));
-
-    private static final boolean LEGACY_DITHER = "old".equals(System.getProperty("terradiff.dither"));
-    private static final boolean NO_DITHER = "off".equals(System.getProperty("terradiff.dither"));
+    private static final float AMP_FINE = 70f;
 
     private static FastNoiseLite makeFnl(int seed, float freq, int oct, float lac, float gain) {
         FastNoiseLite fnl = new FastNoiseLite(seed);
@@ -79,6 +65,9 @@ public final class LocalTerrainProvider {
         public final byte[][] climateH;
         public final byte[][] climateE;
         public KarstNetwork karst = KarstNetwork.EMPTY;
+        public byte[][] waterFlow;
+        public byte[][] flowAngle;
+        public byte[][] flowSpeed;
         // Lowest surface Y around each column, filled on first use by the density function
         public volatile short[] sideSurface;
         public final int width;
@@ -97,29 +86,61 @@ public final class LocalTerrainProvider {
             this.width      = width;
             this.height     = height;
         }
+
+        HeightmapData cropped(int margin) {
+            if (margin == 0) {
+                return this;
+            }
+            int h = height - 2 * margin, w = width - 2 * margin;
+            HeightmapData out = new HeightmapData(crop(heightmap, margin, h, w), crop(biomeIds, margin, h, w),
+                    crop(snowLayers, margin, h, w), crop(waterLevel, margin, h, w), crop(climateT, margin, h, w),
+                    crop(climateH, margin, h, w), crop(climateE, margin, h, w), w, h);
+            out.waterFlow = waterFlow == null ? null : crop(waterFlow, margin, h, w);
+            out.flowAngle = flowAngle == null ? null : crop(flowAngle, margin, h, w);
+            out.flowSpeed = flowSpeed == null ? null : crop(flowSpeed, margin, h, w);
+            return out;
+        }
+
+        private static short[][] crop(short[][] a, int m, int h, int w) {
+            short[][] out = new short[h][];
+            for (int r = 0; r < h; r++) out[r] = java.util.Arrays.copyOfRange(a[r + m], m, m + w);
+            return out;
+        }
+
+        private static byte[][] crop(byte[][] a, int m, int h, int w) {
+            if (a == null) return null;
+            byte[][] out = new byte[h][];
+            for (int r = 0; r < h; r++) out[r] = java.util.Arrays.copyOfRange(a[r + m], m, m + w);
+            return out;
+        }
+    }
+
+    private static volatile boolean flowField = false;
+
+    public static void enableFlowField() {
+        flowField = true;
     }
 
     private static record CacheKey(int i1, int j1, int i2, int j2) {}
     private static record CacheEntry(HeightmapData data, AtomicLong lastAccessed) {}
 
-    // Blocks of area to keep cached, so tile size does not decide the size of the working set
-    private static final long CACHE_AREA_BLOCKS =
-            Long.parseLong(System.getProperty("terradiff.tileCacheArea", "16777216"));
+    // Cached area in blocks, whatever the tile size
+    private static final long CACHE_AREA_BLOCKS = 16777216L;
     private static final int MAX_CACHE_SIZE_HEADROOM = 8;
     private static volatile int maxCacheSize;
     private static final Map<CacheKey, CacheEntry> CACHE = new ConcurrentHashMap<>();
     private static final AtomicLong CACHE_CLOCK = new AtomicLong();
     private static final Map<CacheKey, Future<HeightmapData>> PENDING = new ConcurrentHashMap<>();
 
-    // The main thread is stalled, so the game is visibly frozen until this tile lands
+    // For a tile the main thread is waiting on
     private static final int PRIORITY_URGENT = 0;
     private static final int PRIORITY_BLOCKING = 5;
     // Explorer water runs only when nothing else is waiting
     private static final int PRIORITY_BACKGROUND = 10;
-    // Stops speculative work from growing without bound if the player outruns the generator
+    // Cap on queued speculative tiles
     private static final AtomicLong TASK_SEQ = new AtomicLong();
 
-    // Ordered by priority so a caller waiting on a tile is served before speculative work
+    // Serves waiting callers before speculative work
     private static final ThreadPoolExecutor INFERENCE_EXECUTOR = new ThreadPoolExecutor(
             1, 1, 0L, TimeUnit.MILLISECONDS,
             new PriorityBlockingQueue<Runnable>(),
@@ -226,7 +247,7 @@ public final class LocalTerrainProvider {
         return instanceSeed;
     }
 
-    // Changes on every world load, so position-keyed caches know to refill
+    // Bumped on every world load to invalidate position-keyed caches
     public static int generation() {
         return worldGeneration;
     }
@@ -240,7 +261,6 @@ public final class LocalTerrainProvider {
             }
             long seed = instanceSeed;
             EXPLORER = new LocalTerrainProvider(seed, loadedModels(), true);
-            EXPLORER.pipeline.hydrology.buildSeamNeighbours(false);
             explorerSeed = seed;
             explorerGeneration = generation;
         }
@@ -303,7 +323,7 @@ public final class LocalTerrainProvider {
                     float blockM = NATIVE_RESOLUTION / scale;
                     RiverHydrology.prepare(provider.pipeline, i1, j1, i2, j2, blockM);
                     float[][] out = provider.pipeline.get(i1, j1, i2, j2, true);
-                    return provider.carveWater(out[0], out[0], out[1], i1, j1, H, W, blockM, scale, scale);
+                    return provider.carveWater(out[0], out[0], i1, j1, H, W, blockM, scale, scale);
                 });
             } catch (CancellationException e) {
                 return null;
@@ -359,9 +379,10 @@ public final class LocalTerrainProvider {
         int scale = WorldScaleManager.getCurrentScale();
         PriorityTask<HeightmapData> task = new PriorityTask<>(() -> {
             long computedWindowCountBefore = pipeline.getTotalComputedWindowCount();
-            HeightmapData data = scale <= 1
-                    ? handle1x(i1, j1, i2, j2)
-                    : handleUpsampled(i1, j1, i2, j2, scale);
+            int halo = WATER_HALO;
+            HeightmapData data = (scale <= 1
+                    ? handle1x(i1 - halo, j1 - halo, i2 + halo, j2 + halo)
+                    : handleUpsampled(i1 - halo, j1 - halo, i2 + halo, j2 + halo, scale)).cropped(halo);
             data.karst = RiverHydrology.karstAt(pipeline, i1 / (float) scale, j1 / (float) scale,
                     NATIVE_RESOLUTION / scale);
             long newlyComputedWindowCount =
@@ -403,18 +424,25 @@ public final class LocalTerrainProvider {
     private HeightmapData handle1x(int i1, int j1, int i2, int j2) {
         int H = i2 - i1, W = j2 - j1;
 
-        float[] elevPadded = pipeline.get(i1 - 1, j1 - 1, i2 + 1, j2 + 1, false)[0];
+        int rr = BiomeClassifier.RELIEF_RADIUS;
+        float[] wide = pipeline.get(i1 - 1 - rr, j1 - 1 - rr, i2 + 1 + rr, j2 + 1 + rr, false)[0];
+        int wideW = W + 2 + 2 * rr;
+        float[] elevPadded = cropInner(wide, wideW, rr, H + 2, W + 2);
+        float[] reliefPadded = cropInner(BiomeClassifier.relief(wide, H + 2 + 2 * rr, wideW), wideW, rr, H + 2, W + 2);
+        float[] seaShare = cropInner(BiomeClassifier.seaShare(wide, H + 2 + 2 * rr, wideW), wideW, rr + 1, H, W);
         float[][] out = pipeline.get(i1, j1, i2, j2, true);
         float[] elevFlat = out[0];
         float[] climate  = out[1];
 
-        float[][] waterOut = carveWater(elevFlat, elevFlat, climate, i1, j1, H, W,
+        float[][] waterOut = carveWater(elevFlat, elevFlat, i1, j1, H, W,
                 NATIVE_RESOLUTION, 1, 1);
+        byte[] flow = BlockWater.shape(waterOut[0], waterOut[1], elevFlat, waterOut[4], H, W, NATIVE_RESOLUTION);
 
         byte[] snowFlat = new byte[H * W];
-        short[] biomeFlat = BiomeClassifier.classify(elevFlat, climate, i1, j1, elevPadded, H, W,
+        short[] biomeFlat = BiomeClassifier.classify(elevFlat, climate, i1, j1, 1, elevPadded, reliefPadded, seaShare, H, W,
                 NATIVE_RESOLUTION, snowFlat, riverMask(waterOut[1]));
-        return buildHeightmapData(waterOut[0], climate, biomeFlat, snowFlat, waterOut[1], H, W, NATIVE_RESOLUTION);
+        BiomeClassifier.easeSnowNearWater(snowFlat, waterOut[1], waterOut[0], H, W);
+        return buildHeightmapData(waterOut[0], climate, biomeFlat, snowFlat, waterOut[1], flow, waterOut[2], waterOut[3], waterOut[5], H, W, NATIVE_RESOLUTION);
     }
 
     private HeightmapData handleUpsampled(int i1, int j1, int i2, int j2, int scale) {
@@ -446,17 +474,28 @@ public final class LocalTerrainProvider {
         float[] elevSmooth = cropFlat(elevUp, cropI1, cropJ1, H, W, nH * scale, nW * scale);
         float[] elevPadded = cropFlat(elevUp, cropI1 - 1, cropJ1 - 1, H+2, W+2, nH * scale, nW * scale);
 
+        int rr = BiomeClassifier.RELIEF_RADIUS;
+        float[] wide = pipeline.get(i1p - rr, j1p - rr, i2p + rr, j2p + rr, false)[0];
+        float[] reliefNative = cropInner(BiomeClassifier.relief(wide, nH + 2 * rr, nW + 2 * rr), nW + 2 * rr, rr, nH, nW);
+        float[][] reliefUp = LaplacianUtils.bilinearResize(to2D(reliefNative, nH, nW), nH * scale, nW * scale);
+        float[] reliefPadded = cropFlat(reliefUp, cropI1 - 1, cropJ1 - 1, H + 2, W + 2, nH * scale, nW * scale);
+        float[] seaNative = cropInner(BiomeClassifier.seaShare(wide, nH + 2 * rr, nW + 2 * rr), nW + 2 * rr, rr, nH, nW);
+        float[][] seaUp = LaplacianUtils.bilinearResize(to2D(seaNative, nH, nW), nH * scale, nW * scale);
+        float[] seaShare = cropFlat(seaUp, cropI1, cropJ1, H, W, nH * scale, nW * scale);
+
         float[] climate = upsampleClimate(climateNativeFlat, nH, nW, cropI1, cropJ1, H, W, scale, nH * scale, nW * scale);
 
         float[] elevOut = addElevationNoise(elevSmooth, elevPadded, i1, j1, H, W, pixelSizeM);
 
-        float[][] waterOut = carveWater(elevOut, elevSmooth, climate, i1, j1, H, W,
+        float[][] waterOut = carveWater(elevOut, elevSmooth, i1, j1, H, W,
                 pixelSizeM, scale, 1);
+        byte[] flow = BlockWater.shape(waterOut[0], waterOut[1], elevOut, waterOut[4], H, W, pixelSizeM);
 
         byte[] snowFlat = new byte[H * W];
-        short[] biomeFlat = BiomeClassifier.classify(elevSmooth, climate, i1, j1, elevPadded, H, W,
+        short[] biomeFlat = BiomeClassifier.classify(elevSmooth, climate, i1, j1, 1, elevPadded, reliefPadded, seaShare, H, W,
                 pixelSizeM, snowFlat, riverMask(waterOut[1]));
-        return buildHeightmapData(waterOut[0], climate, biomeFlat, snowFlat, waterOut[1], H, W, pixelSizeM);
+        BiomeClassifier.easeSnowNearWater(snowFlat, waterOut[1], waterOut[0], H, W);
+        return buildHeightmapData(waterOut[0], climate, biomeFlat, snowFlat, waterOut[1], flow, waterOut[2], waterOut[3], waterOut[5], H, W, pixelSizeM);
     }
 
     public static float[] addElevationNoise(float[] elevSmooth, float[] elevPadded,
@@ -485,12 +524,6 @@ public final class LocalTerrainProvider {
                 float fineAmp = ampF * sf;
                 float ditherAmp = Math.max(0f, floorM - fineAmp) * offSea;
 
-                if (LEGACY_DITHER) {
-                    fineAmp = Math.max(fineAmp, floorM * offSea);
-                    ditherAmp = 0f;
-                } else if (NO_DITHER) {
-                    ditherAmp = 0f;
-                }
                 elevOut[idx] = e
                         + ELEV_DITHER.GetNoise(nx, ny) * ditherAmp
                         + ELEV_NOISE_COARSE.GetNoise(nx, ny) * ampC * sf
@@ -547,13 +580,19 @@ public final class LocalTerrainProvider {
         return out;
     }
 
+    public static float[] cropInner(float[] src, int srcW, int off, int H, int W) {
+        float[] out = new float[H * W];
+        for (int r = 0; r < H; r++) System.arraycopy(src, (r + off) * srcW + off, out, r * W, W);
+        return out;
+    }
+
     private static float[][] to2D(float[] flat, int H, int W) {
         float[][] a = new float[H][W];
         for (int r = 0; r < H; r++) System.arraycopy(flat, r * W, a[r], 0, W);
         return a;
     }
 
-    private float[][] carveWater(float[] elevOut, float[] elevSmooth, float[] climate, int i1, int j1, int H, int W,
+    private float[][] carveWater(float[] elevOut, float[] elevSmooth, int i1, int j1, int H, int W,
                                  float metersPerBlock, int scale, int coordScale) {
         float[] carved = new float[H * W];
         float[] water = new float[H * W];
@@ -561,9 +600,22 @@ public final class LocalTerrainProvider {
         boolean[] source = new boolean[H * W];
         boolean[] outlet = new boolean[H * W];
         boolean[] fallMask = new boolean[H * W];
+        float[] frac = new float[H * W];
+        java.util.Arrays.fill(frac, Float.NaN);
+        float[] angle = flowField ? new float[H * W] : null;
+        float[] slope = flowField ? new float[H * W] : null;
+        float[] lakeSpeed = flowField ? new float[H * W] : null;
+        boolean[] still = flowField ? new boolean[H * W] : null;
+        float[] lf = new float[3];
+        if (angle != null) {
+            java.util.Arrays.fill(angle, Float.NaN);
+            java.util.Arrays.fill(lakeSpeed, Float.NaN);
+        }
         WaterNetwork.Sample sample = new WaterNetwork.Sample();
 
         int coordScaleToNative = coordScale == 1 ? scale : 1;
+        LakeShore shore = LakeShore.around(pipeline, i1, j1, H, W, coordScaleToNative, scale, metersPerBlock);
+        float[] lk = new float[2];
 
         for (int r = 0; r < H; r++) {
             InfiniteTensor.throwIfCancelled();
@@ -575,55 +627,93 @@ public final class LocalTerrainProvider {
                 float[] ch = RiverHydrology.sampleChannel(pipeline, nativeI, nativeJ, metersPerBlock);
 
                 float distBlocks = ch == null ? -1f : ch[0] * scale;
-                float magnitude = ch == null ? 0f : ch[1];
                 float channelWater = ch == null ? 0f : ch[2];
                 float deltaWeight = ch == null ? 0f : ch[3];
-
-                float channelWaterSmooth = ch == null ? 0f : ch[4];
 
                 float channelWidth = ch == null ? 0f : ch[5];
                 float channelDepth = ch == null ? 0f : ch[6];
                 float fallBlocks = ch == null ? 0f : ch[7];
-                float[] lk = RiverHydrology.sampleLake(pipeline, nativeI, nativeJ, metersPerBlock);
-                float lakeSurface = lk == null ? WaterNetwork.NO_WATER : lk[0];
-                float lakeDeep = lk == null ? 0f : lk[1];
-                float precip = climate == null ? 0f : Math.max(0f, climate[2 * H * W + idx]);
+                boolean nearLake = shore != null && shore.sample(i1 + r, j1 + c, lk);
+                float lakeSurface = nearLake ? lk[0] : WaterNetwork.NO_WATER;
+                float lakeShore = nearLake ? lk[1] * scale : 0f;
 
                 WaterNetwork.sample((j1 + c) * coordScale, (i1 + r) * coordScale,
-                        elevOut[idx], elevSmooth[idx], precip, distBlocks, magnitude,
-                        channelWater, channelWaterSmooth, channelWidth, channelDepth, fallBlocks,
-                        lakeSurface, lakeDeep, deltaWeight, metersPerBlock, scale, sample);
+                        elevOut[idx], elevSmooth[idx], distBlocks,
+                        channelWater, channelWidth, channelDepth, fallBlocks,
+                        ch == null ? 0f : ch[10],
+                        lakeSurface, lakeShore, deltaWeight, metersPerBlock, scale, sample);
 
                 carved[idx] = sample.bedElevM;
                 water[idx] = sample.waterSurfaceM;
+                boolean inLake = nearLake && sample.waterSurfaceM == lakeSurface;
+                if (inLake) frac[idx] = -1f;
+                if (!inLake && ch != null && sample.hasWater() && channelWater > 0f) {
+                    float b = channelWater / metersPerBlock;
+                    if (Math.floor(sample.waterSurfaceM / metersPerBlock) == Math.floor(b)) frac[idx] = b - (float) Math.floor(b);
+                }
 
+                if (angle != null && ch != null && !inLake && (ch[8] != 0f || ch[9] != 0f)) {
+                    angle[idx] = (float) Math.atan2(ch[8], ch[9]);
+                    slope[idx] = ch[10];
+                }
+                if (angle != null && inLake) {
+                    if (RiverHydrology.sampleLakeFlow(pipeline, nativeI, nativeJ, metersPerBlock, lf)) {
+                        angle[idx] = (float) Math.atan2(lf[0], lf[1]);
+                        lakeSpeed[idx] = lf[2];
+                    } else {
+                        still[idx] = true;
+                    }
+                }
                 fallMask[idx] = fallBlocks >= 1.5f;
                 source[idx] = (distBlocks >= 0f && distBlocks < 3f)
-                        || lakeSurface > WaterNetwork.NO_WATER
+                        || inLake
                         || elevOut[idx] < 0f;
-                outlet[idx] = lakeSurface > WaterNetwork.NO_WATER || elevOut[idx] < 0f;
+                outlet[idx] = inLake || elevOut[idx] < 0f;
             }
         }
         healPlugs(water, carved, H, W, metersPerBlock);
         pruneStrandedWater(water, source, H, W);
 
-        for (int k = 0; k < 4; k++) {
-            relaxWaterSteps(water, carved, fallMask, H, W, metersPerBlock);
-            breachDams(water, H, W, metersPerBlock);
-        }
-        dropUndrainable(water, outlet, H, W, metersPerBlock);
         restoreDryCarve(carved, elevOut, water, H, W);
-        return new float[][]{carved, water};
+        if (angle != null) fillFlowGaps(water, angle, slope, lakeSpeed, still, H, W);
+        return new float[][]{carved, water, angle, slope, frac, lakeSpeed};
     }
 
-    private static final float PLUG_HEAL_BLOCKS =
-            Float.parseFloat(System.getProperty("terradiff.plugHeal", "2"));
+    // Blocks of water a current spreads into from the nearest flowing column
+    private static final int FLOW_GAP_REACH = 12;
 
-    private static final int PLUG_HEAL_PASSES =
-            Integer.parseInt(System.getProperty("terradiff.plugHealPasses", "2"));
+    // Gives wet columns with no current the direction and speed of the nearest flowing water in the same body
+    private static void fillFlowGaps(float[] water, float[] angle, float[] slope, float[] lakeSpeed, boolean[] still,
+                                     int H, int W) {
+        int n = H * W;
+        int[] queue = new int[n];
+        int[] reach = new int[n];
+        int head = 0, tail = 0;
+        for (int i = 0; i < n; i++) {
+            if (!Float.isNaN(angle[i]) && water[i] > WaterNetwork.NO_WATER) queue[tail++] = i;
+        }
+        while (head < tail) {
+            int i = queue[head++];
+            if (reach[i] >= FLOW_GAP_REACH) continue;
+            int r = i / W, c = i % W;
+            for (int k = 0; k < 4; k++) {
+                int j = k == 0 ? (r > 0 ? i - W : -1) : k == 1 ? (r < H - 1 ? i + W : -1)
+                        : k == 2 ? (c > 0 ? i - 1 : -1) : (c < W - 1 ? i + 1 : -1);
+                if (j < 0 || still[j] || !Float.isNaN(angle[j]) || water[j] <= WaterNetwork.NO_WATER) continue;
+                angle[j] = angle[i];
+                slope[j] = slope[i];
+                lakeSpeed[j] = lakeSpeed[i];
+                reach[j] = reach[i] + 1;
+                queue[tail++] = j;
+            }
+        }
+    }
 
-    private static final int PLUG_REACH =
-            Integer.parseInt(System.getProperty("terradiff.plugReach", "2"));
+    private static final float PLUG_HEAL_BLOCKS = 2f;
+
+    private static final int PLUG_HEAL_PASSES = 2;
+
+    private static final int PLUG_REACH = 2;
 
     private static boolean wet(float[] water, int i) {
         return water[i] > WaterNetwork.NO_WATER;
@@ -649,7 +739,6 @@ public final class LocalTerrainProvider {
         if (cap <= 0f) {
             return;
         }
-        int healed = 0;
         for (int pass = 0; pass < PLUG_HEAL_PASSES; pass++) {
             float[] next = null;
             for (int r = 1; r < H - 1; r++) {
@@ -665,9 +754,9 @@ public final class LocalTerrainProvider {
                         float a = firstWater(water, r, c, dr, dc, H, W, PLUG_REACH);
                         float b = firstWater(water, r, c, -dr, -dc, H, W, PLUG_REACH);
                         if (a > WaterNetwork.NO_WATER && b > WaterNetwork.NO_WATER) {
-                            float lower = Math.min(a, b);
-                            if (lower > best) {
-                                best = lower;
+                            float level = Math.max(a, b);
+                            if (level > best) {
+                                best = level;
                             }
                         }
                     }
@@ -679,7 +768,6 @@ public final class LocalTerrainProvider {
                     }
                     carved[i] = Math.min(carved[i], best - 0.5f * blockM);
                     next[i] = best;
-                    healed++;
                 }
             }
             if (next == null) {
@@ -687,256 +775,17 @@ public final class LocalTerrainProvider {
             }
             System.arraycopy(next, 0, water, 0, water.length);
         }
-        if (healed > 0 && Boolean.getBoolean("terradiff.diag")) {
-            System.err.printf("diag healed %d plug columns%n", healed);
-        }
     }
-
-    private static final int BREACH_PASSES =
-            Integer.parseInt(System.getProperty("terradiff.breachPasses", "250"));
-
-    private static void breachDams(float[] water, int H, int W, float blockM) {
-        int n = H * W;
-        int[] lab = new int[n];
-        int[] st = new int[n];
-        int[] open = new int[n];
-        boolean[] drains = new boolean[n];
-        int breached = 0;
-        for (int pass = 0; pass < BREACH_PASSES; pass++) {
-            java.util.Arrays.fill(lab, 0);
-            java.util.Arrays.fill(drains, false);
-            int top = 0;
-            int bodies = 0;
-            for (int s = 0; s < n; s++) {
-                if (lab[s] != 0 || water[s] <= WaterNetwork.NO_WATER) {
-                    continue;
-                }
-                bodies++;
-                int sp = 0;
-                st[sp++] = s;
-                lab[s] = bodies;
-                int loAt = s;
-                while (sp > 0) {
-                    int i = st[--sp];
-                    if (water[i] < water[loAt]) {
-                        loAt = i;
-                    }
-                    int r = i / W, c = i % W;
-                    if (r > 0 && water[i - W] > WaterNetwork.NO_WATER && lab[i - W] == 0) { lab[i - W] = bodies; st[sp++] = i - W; }
-                    if (r < H - 1 && water[i + W] > WaterNetwork.NO_WATER && lab[i + W] == 0) { lab[i + W] = bodies; st[sp++] = i + W; }
-                    if (c > 0 && water[i - 1] > WaterNetwork.NO_WATER && lab[i - 1] == 0) { lab[i - 1] = bodies; st[sp++] = i - 1; }
-                    if (c < W - 1 && water[i + 1] > WaterNetwork.NO_WATER && lab[i + 1] == 0) { lab[i + 1] = bodies; st[sp++] = i + 1; }
-                }
-                drains[loAt] = true;
-                open[top++] = loAt;
-            }
-            while (top > 0) {
-                int i = open[--top];
-                int r = i / W, c = i % W;
-                float from = water[i] - 0.001f;
-                if (r > 0) top = drainInto(water, drains, open, top, i - W, from);
-                if (r < H - 1) top = drainInto(water, drains, open, top, i + W, from);
-                if (c > 0) top = drainInto(water, drains, open, top, i - 1, from);
-                if (c < W - 1) top = drainInto(water, drains, open, top, i + 1, from);
-            }
-
-            boolean cut = false;
-            for (int i = 0; i < n; i++) {
-                if (water[i] <= WaterNetwork.NO_WATER || drains[i]) {
-                    continue;
-                }
-                int r = i / W, c = i % W;
-                float above = water[i] + 0.001f;
-                float spill = Float.MAX_VALUE;
-                if (r > 0) spill = spillOver(water, i - W, above, spill);
-                if (r < H - 1) spill = spillOver(water, i + W, above, spill);
-                if (c > 0) spill = spillOver(water, i - 1, above, spill);
-                if (c < W - 1) spill = spillOver(water, i + 1, above, spill);
-                if (spill != Float.MAX_VALUE) {
-                    water[i] = spill;
-                    breached++;
-                    cut = true;
-                }
-            }
-            if (!cut) {
-                break;
-            }
-        }
-        if (Boolean.getBoolean("terradiff.diag")) {
-            System.err.printf("diag breach: cut %d damming columns%n", breached);
-        }
-    }
-
-    private static int drainInto(float[] water, boolean[] drains, int[] open, int top, int j, float from) {
-        if (water[j] <= WaterNetwork.NO_WATER || drains[j] || !(water[j] >= from)) {
-            return top;
-        }
-        drains[j] = true;
-        open[top++] = j;
-        return top;
-    }
-
-    private static float spillOver(float[] water, int j, float above, float spill) {
-        float v = water[j];
-        return v > WaterNetwork.NO_WATER && v > above && v < spill ? v : spill;
-    }
-
-    private static void relaxWaterSteps(float[] water, float[] bed, boolean[] fall,
-                                        int H, int W, float blockM) {
-        int n = H * W;
-
-        float[] rank = water.clone();
-        int wet = 0;
-        for (int i = 0; i < n; i++) {
-            if (water[i] > WaterNetwork.NO_WATER) {
-                wet++;
-            }
-        }
-
-        long[] keyed = new long[wet];
-        for (int i = 0, k = 0; i < n; i++) {
-            if (water[i] > WaterNetwork.NO_WATER) {
-                int bits = Float.floatToIntBits(rank[i]);
-                bits ^= (bits >> 31) & 0x7FFFFFFF;
-                keyed[k++] = (((long) bits) << 32) | (i & 0xFFFFFFFFL);
-            }
-        }
-        Arrays.sort(keyed);
-
-        int lowered = 0, dried = 0, floored = 0;
-        for (int pass = 0; pass < 12; pass++) {
-            boolean changed = false;
-            for (int oi = 0; oi < wet; oi++) {
-                int i = (int) (keyed[oi] & 0xFFFFFFFFL);
-                if (water[i] <= WaterNetwork.NO_WATER || fall[i]) {
-                    continue;
-                }
-                int r = i / W, c = i % W;
-                float cap = Float.MAX_VALUE, floor = -Float.MAX_VALUE;
-                for (int k = 0; k < 4; k++) {
-                    int j = switch (k) {
-                        case 0 -> r > 0 ? i - W : -1;
-                        case 1 -> r < H - 1 ? i + W : -1;
-                        case 2 -> c > 0 ? i - 1 : -1;
-                        default -> c < W - 1 ? i + 1 : -1;
-                    };
-                    if (j < 0 || water[j] <= WaterNetwork.NO_WATER || fall[j]) {
-                        continue;
-                    }
-
-                    if (rank[j] > rank[i] + 1.0e-4f) {
-                        continue;
-                    }
-                    if (rank[i] - rank[j] > RELAX_MAX_DROP * blockM) {
-                        continue;
-                    }
-                    cap = Math.min(cap, water[j] + blockM);
-                    if (rank[j] < rank[i]) {
-                        floor = Math.max(floor, water[j]);
-                    }
-                }
-                if (cap == Float.MAX_VALUE) {
-                    continue;
-                }
-                float target = Math.max(floor, Math.min(water[i], cap));
-                if (target < water[i]) {
-                    if (floor > cap) {
-                        floored++;
-                    }
-                    water[i] = target;
-                    lowered++;
-                    changed = true;
-                }
-            }
-            if (!changed) {
-                break;
-            }
-        }
-        for (int i = 0; i < n; i++) {
-            if (water[i] > WaterNetwork.NO_WATER && water[i] <= bed[i]) {
-                water[i] = WaterNetwork.NO_WATER;
-                dried++;
-            }
-        }
-
-        int banked = 0;
-        float bankCap = BANK_FRINGE_BLOCKS * blockM;
-        for (int pass = 0; pass < 8; pass++) {
-            boolean moved = false;
-            for (int i = 0; i < n; i++) {
-                if (water[i] <= WaterNetwork.NO_WATER) {
-                    continue;
-                }
-                int r = i / W, c = i % W;
-                for (int k = 0; k < 4; k++) {
-                    int j = k == 0 ? (r > 0 ? i - W : -1)
-                          : k == 1 ? (r < H - 1 ? i + W : -1)
-                          : k == 2 ? (c > 0 ? i - 1 : -1)
-                                   : (c < W - 1 ? i + 1 : -1);
-                    if (j < 0 || water[j] <= WaterNetwork.NO_WATER) {
-                        continue;
-                    }
-                    if (water[i] - water[j] < 2f * blockM - 0.001f) {
-                        continue;
-                    }
-                    if (water[i] - bed[i] > bankCap) {
-                        continue;
-                    }
-                    water[i] = WaterNetwork.NO_WATER;
-                    banked++;
-                    moved = true;
-                    break;
-                }
-            }
-            if (!moved) {
-                break;
-            }
-        }
-        if (Boolean.getBoolean("terradiff.diag")) {
-            System.err.printf("diag bank: dried %d fringe columns between mismatched waters%n", banked);
-        }
-        if (Boolean.getBoolean("terradiff.diag")) {
-
-            int rises = 0;
-            float worst = 0f;
-            for (int i = 0; i < n; i++) {
-                if (water[i] <= WaterNetwork.NO_WATER) {
-                    continue;
-                }
-                int r = i / W, c = i % W;
-                for (int k = 0; k < 4; k++) {
-                    int j = switch (k) {
-                        case 0 -> r > 0 ? i - W : -1;
-                        case 1 -> r < H - 1 ? i + W : -1;
-                        case 2 -> c > 0 ? i - 1 : -1;
-                        default -> c < W - 1 ? i + 1 : -1;
-                    };
-                    if (j < 0 || water[j] <= WaterNetwork.NO_WATER || rank[j] >= rank[i]) {
-                        continue;
-                    }
-                    if (water[j] - water[i] > 1.0e-3f) {
-                        rises++;
-                        worst = Math.max(worst, water[j] - water[i]);
-                    }
-                }
-            }
-            System.err.printf("diag relax: lowered=%d floored=%d dried=%d rasterRises=%d worst=%.2fm%n",
-                    lowered, floored, dried, rises, worst);
-        }
-    }
-
-    private static final boolean DRAIN_GATE =
-            !"false".equals(System.getProperty("terradiff.drainGate"));
 
     // Blocks of valley kept around water that survived
-    private static final int DRY_CARVE_REACH =
-            Integer.parseInt(System.getProperty("terradiff.dryCarveReach", "16"));
+    private static final int WATER_HALO = 12;
+
+    private static final int DRY_CARVE_REACH = 16;
 
     private static final int DRY_CARVE_RAMP = 4;
 
     // Puts back ground that was excavated toward water no longer there
     private static void restoreDryCarve(float[] carved, float[] elev, float[] water, int H, int W) {
-        if (!DRAIN_GATE || DRY_CARVE_REACH <= 0) return;
         int n = H * W;
         int[] dist = new int[n];
         int[] queue = new int[n];
@@ -974,56 +823,6 @@ public final class LocalTerrainProvider {
             if (d <= DRY_CARVE_REACH) continue;
             float f = d >= limit ? 1f : (d - DRY_CARVE_REACH) / (float) DRY_CARVE_RAMP;
             carved[i] += (elev[i] - carved[i]) * f;
-        }
-    }
-
-    // Removes water with no downhill path out
-    private static void dropUndrainable(float[] water, boolean[] outlet, int H, int W, float blockM) {
-        if (!DRAIN_GATE) return;
-        int n = H * W;
-        boolean[] drains = new boolean[n];
-        int[] queue = new int[n];
-        int tail = 0;
-
-        for (int r = 0; r < H; r++) {
-            for (int c = 0; c < W; c++) {
-                int i = r * W + c;
-                if (water[i] <= WaterNetwork.NO_WATER) {
-                    continue;
-                }
-                boolean rim = r == 0 || c == 0 || r == H - 1 || c == W - 1;
-                if (rim || outlet[i]) {
-                    drains[i] = true;
-                    queue[tail++] = i;
-                }
-            }
-        }
-
-        float tol = 0.05f * blockM;
-        for (int head = 0; head < tail; head++) {
-            int i = queue[head];
-            int r = i / W, c = i % W;
-            for (int k = 0; k < 4; k++) {
-                int j = switch (k) {
-                    case 0 -> r > 0 ? i - W : -1;
-                    case 1 -> r < H - 1 ? i + W : -1;
-                    case 2 -> c > 0 ? i - 1 : -1;
-                    default -> c < W - 1 ? i + 1 : -1;
-                };
-                if (j < 0 || drains[j] || water[j] <= WaterNetwork.NO_WATER) {
-                    continue;
-                }
-                if (water[j] >= water[i] - tol) {
-                    drains[j] = true;
-                    queue[tail++] = j;
-                }
-            }
-        }
-
-        for (int i = 0; i < n; i++) {
-            if (water[i] > WaterNetwork.NO_WATER && !drains[i]) {
-                water[i] = WaterNetwork.NO_WATER;
-            }
         }
     }
 
@@ -1078,7 +877,8 @@ public final class LocalTerrainProvider {
 
     private static HeightmapData buildHeightmapData(float[] elevFlat, float[] climate,
                                                      short[] biomeFlat,
-                                                     byte[] snowFlat, float[] waterFlat,
+                                                     byte[] snowFlat, float[] waterFlat, byte[] flowFlat,
+                                                     float[] angleFlat, float[] slopeFlat, float[] lakeSpeedFlat,
                                                      int H, int W, float metersPerBlock) {
         short[][] heightmap = new short[H][W];
         short[][] biomeIds  = new short[H][W];
@@ -1101,15 +901,43 @@ public final class LocalTerrainProvider {
                         : (short) Math.max(-32767, Math.min(32767, (int) Math.floor(w)));
             }
         fillClimateParams(elevFlat, climate, climateT, climateH, climateE, H, W, metersPerBlock);
-        return new HeightmapData(heightmap, biomeIds, snowLayers, waterLevel,
+        HeightmapData data = new HeightmapData(heightmap, biomeIds, snowLayers, waterLevel,
                 climateT, climateH, climateE, W, H);
+        if (flowFlat != null) {
+            byte[][] flow = new byte[H][W];
+            for (int r = 0; r < H; r++) System.arraycopy(flowFlat, r * W, flow[r], 0, W);
+            data.waterFlow = flow;
+        }
+        if (angleFlat != null) {
+            data.flowAngle = new byte[H][W];
+            data.flowSpeed = new byte[H][W];
+            for (int r = 0; r < H; r++) {
+                for (int c = 0; c < W; c++) {
+                    int idx = r * W + c;
+                    float a = angleFlat[idx];
+                    if (Float.isNaN(a) || waterFlat[idx] <= WaterNetwork.NO_WATER) {
+                        data.flowAngle[r][c] = -1;
+                        continue;
+                    }
+                    double turn = (a < 0f ? a + 2.0 * Math.PI : a) / (2.0 * Math.PI);
+                    int q = (int) Math.round(turn * 255.0);
+                    data.flowAngle[r][c] = (byte) (q >= 255 ? q - 255 : q);
+                    float lake = lakeSpeedFlat == null ? Float.NaN : lakeSpeedFlat[idx];
+                    if (!Float.isNaN(lake)) {
+                        data.flowSpeed[r][c] = (byte) Math.max(1, Math.round(Math.max(0f, Math.min(2f, lake)) / 2.0 * 255.0));
+                        continue;
+                    }
+                    double speed = 0.45 + 2.2 * Math.sqrt(Math.max(0f, slopeFlat[idx]));
+                    data.flowSpeed[r][c] = (byte) Math.round(Math.max(0.35, Math.min(1.4, speed)) / 2.0 * 255.0);
+                }
+            }
+        }
+        return data;
     }
 
-    private static final int RELIEF_WINDOW =
-            Integer.parseInt(System.getProperty("terradiff.reliefWindow", "10"));
+    private static final int RELIEF_WINDOW = 10;
 
-    private static final float RELIEF_REF =
-            Float.parseFloat(System.getProperty("terradiff.reliefRef", "25"));
+    private static final float RELIEF_REF = 25f;
 
     // Projects the model's climate output onto vanilla's [-1, 1] climate axes
     private static void fillClimateParams(float[] elevFlat, float[] climate,
